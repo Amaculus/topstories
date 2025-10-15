@@ -1,5 +1,13 @@
-.venv/
 .env
-__pycache__/
-storage/
 *.pyc
+__pycache__/
+.DS_Store
+data/offers_cache.pkl
+data/articles_index.bin
+data/articles_meta.jsonl
+data/articles_index.npy
+data/articles_meta.json
+storage/
+*.npy
+venv/
+.venv/
