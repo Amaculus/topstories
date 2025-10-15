@@ -1,0 +1,5 @@
+BOOT: C:\Users\Antonio\planwrite\scripts\ingest_gsc_top.py
+Traceback (most recent call last):
+  File "C:\Users\Antonio\planwrite\scripts\ingest_gsc_top.py", line 14, in <module>
+    import trafilatura
+ModuleNotFoundError: No module named 'trafilatura'
