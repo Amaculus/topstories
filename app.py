@@ -163,17 +163,30 @@ OUTPUT FORMAT (STRICT):
   [H3: ...]  (only when helpful under the preceding H2)
 - Start with a single [INTRO]; keep intro 2–3 sentences.
 - Insert [SHORTCODE] tokens where promo cards should appear (one after intro, then 3-4 throughout)
-- Then propose as many H2 as needed. Avoid duplicate/near-duplicate headings.
 - Do NOT include CTAs in the outline (those are inserted during drafting).
 - Keep headings short, concrete, and scannable.
 
-CRITICAL CONSTRAINTS:
-- Must include a How To Sign Up section at the end
-- NEVER INCLUDE OFFER TERMS HEADING
-- Do not Include a Responsable Gaming section
-- Maximum 2 H3 subsections under any one H2
-- Focus on the ESSENTIAL information only
-- This is a promo article, not a comprehensive guide
+
+CRITICAL LENGTH CONSTRAINTS (STRICTLY ENFORCE):
+- Generate EXACTLY 4-5 H2 sections total
+- This is a 500-600 word promo announcement, NOT a 2000-word guide
+- Maximum 1 H3 subsections under any one H2
+- NEVER include "Terms and Conditions" or "Responsible Gaming" headings
+- Must include ONE "How to Sign Up" section at the end
+- Focus on ESSENTIAL info only
+
+REQUIRED STRUCTURE (4-5 H2s max):
+[INTRO]
+[SHORTCODE]
+[H2: Overview] (why this offer matters - 2-3 sentences)
+[SHORTCODE]
+[H2: How to Claim] (worked example with dollar amounts)
+[SHORTCODE]
+[H2: Eligibility] (who qualifies - 2 sentences)
+[H2: How to Sign Up] (step-by-step numbered list)
+
+That's it. STOP after 4-5 H2s. This is a NEWS ANNOUNCEMENT, not a comprehensive review.
+
 """
 
     outline_text = generate_markdown(system=sys, user=user, temperature=get_temperature_by_section("outline"))
