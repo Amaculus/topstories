@@ -129,7 +129,7 @@ def _load_from_dynamic_sheet() -> pd.DataFrame:
                 body={"data": updates, "valueInputOption": "USER_ENTERED"}
             ).execute()
             
-            time.sleep(0.5)
+            time.sleep(1)
             
             # Read computed values
             read_range = f"{TAB_NAME}!A2:K2"
