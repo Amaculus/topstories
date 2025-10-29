@@ -60,7 +60,9 @@ def get_style_instructions() -> str:
 
 VOICE & TONE:
 - Conversational and informative, like a knowledgeable friend sharing a deal
-- Casual but professional - use contractions naturally
+- Use active voice, avoid passive constructions
+- Minimize contractions - use "you will" instead of "you'll", "do not" instead of "don't"
+- NO EXCLAMATION POINTS anywhere in the content
 - Excited but not overselling - avoid hyperbolic marketing language
 - Honest about limitations, clear about requirements
 
@@ -70,6 +72,7 @@ FORBIDDEN PHRASES (never use):
 - "revolutionary", "premier", "exceptional", "stands out as"
 - "generous bonuses and user-friendly app" (overused cliché)
 - Marketing hype like "experience the thrill like never before"
+- Any exclamation points
 
 SECTION VARIETY (critical - avoid repetition):
 - Each section should ADD new information, not restate previous sections

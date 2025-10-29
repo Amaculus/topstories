@@ -10,12 +10,25 @@ BET_TRIGGERS = [r"\bbet\b", r"\bwager\b", r"\bparlay\b"]
 ALLOWLIST = ["yourdomain.com"]  # REPLACE with your actual internal domain(s)
 
 STATE_DISCLAIMERS = {
-    "ALL": "21+. Gambling problem? Call 1-800-GAMBLER. Please bet responsibly.",
+    "ALL": "21+. Gambling problem? Visit the National Council on Problem Gambling at ncpgambling.org or call your state helpline. Please bet responsibly.",
     "NY": "21+. Gambling problem? Call 877-8-HOPENY or text HOPENY (467369).",
     "AZ": "21+. Gambling problem? Call 1-800-NEXT-STEP.",
     "PA": "21+. Gambling problem? Call 1-800-GAMBLER.",
     "NJ": "21+. Gambling problem? Call 1-800-GAMBLER.",
     "MI": "21+. Gambling problem? Call 1-800-GAMBLER.",
+    "CO": "21+. Gambling problem? Call 1-800-GAMBLER.",
+    "IL": "21+. Gambling problem? Call 1-800-GAMBLER.",
+    "IN": "21+. Gambling problem? Call 1-800-9-WITH-IT.",
+    "IA": "21+. Gambling problem? Call 1-800-BETS-OFF.",
+    "TN": "21+. Gambling problem? Call the Tennessee REDLINE 1-800-889-9789.",
+    "VA": "21+. Gambling problem? Call 1-888-532-3500.",
+    "WV": "21+. Gambling problem? Call 1-800-GAMBLER.",
+    "LA": "21+. Gambling problem? Call 1-877-770-STOP.",
+    "KS": "21+. Gambling problem? Call 1-800-522-4700.",
+    "MD": "21+. Gambling problem? Call 1-800-GAMBLER.",
+    "OH": "21+. Gambling problem? Call 1-800-589-9966.",
+    "NC": "21+. Gambling problem? Call 1-877-718-5543.",
+    "KY": "21+. Gambling problem? Call 1-800-GAMBLER.",
 }
 
 def disclaimer_for_state(state: str) -> str:

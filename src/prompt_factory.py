@@ -70,6 +70,7 @@ def make_promptsect(
     allow_cta: bool = True,
     previous_content: str = "",
     available_states: list[str] = None,
+    keyword: str = "",
 ) -> PromptSect:
     """
     Build a section-writing prompt (system+user) for a single H2/H3.
@@ -78,6 +79,8 @@ def make_promptsect(
     brand = (offer_row.get("brand") or "").strip()
     offer_text = (offer_row.get("offer_text") or "").strip()
     bonus_code = (offer_row.get("bonus_code") or "").strip()
+    focus_term = keyword.strip() if keyword else f"{brand} promo"
+
 
     # Normalize snippets
     snips_list = [t for t in (_coalesce_text(s) for s in (brief.retrieved_snippets or [])) if t]
@@ -132,6 +135,7 @@ def make_promptsect(
             "Vary your sentence openings - don't repeat previous patterns.",
             "Maintain neutral, compliant tone; avoid marketing hype and prohibited phrases.",
             "No tables, no HTML.",
+            f"Use '{focus_term}' as the main reference, not the full offer name",
             "Do NOT print or restate the heading; write paragraphs only.",
         ]
         format_instruction = "OUTPUT FORMAT: 2-4 flowing paragraphs."
@@ -223,6 +227,7 @@ def make_intro_prompt(
     date_str: str,
     available_states: list[str],
     event_context: str = "",
+    keyword: str = "",  # ADD THIS PARAMETER
 ) -> PromptSect:
     """Build the lede/intro prompt with natural date and event integration."""
     sys = (
@@ -232,6 +237,7 @@ def make_intro_prompt(
         "The intro must be ONE flowing paragraph with natural transitions."
     )
 
+    focus_term = keyword.strip() if keyword else f"{brand} promo"
     brand = (brand or "").strip()
     offer_text = (offer_text or "").strip()
     bonus_code = (bonus_code or "").strip()
@@ -315,7 +321,10 @@ def make_intro_prompt(
         f"Mention '{brand} bonus code {bonus_code}' twice naturally",
         "Be conversational and useful - avoid marketing hype",
         "List ALL states explicitly if multiple states",
-
+        "NO exclamation points anywhere",
+        "Don't overuse contractions. Use them naturally. (you will, not you'll)",
+        f"Use '{focus_term}' as the main reference, not the full offer name",
+        "Sound conversational but professional",
     ]
 
     user = f"""Write a 3-4 sentence intro paragraph following this structure:

@@ -1,4 +1,4 @@
-# app.py — Compact, minimal UI
+# app.py — Compact, minimal UI with improved content generation
 
 import os
 import re
@@ -165,13 +165,13 @@ OUTPUT FORMAT (STRICT):
 - Insert [SHORTCODE] tokens where promo cards should appear (one after intro, then 3-4 throughout)
 - Do NOT include CTAs in the outline (those are inserted during drafting).
 - Keep headings short, concrete, and scannable.
-
+- Use the keyword "{keyword}" in headings where natural, not full offer titles
 
 CRITICAL LENGTH CONSTRAINTS (STRICTLY ENFORCE):
 - Generate EXACTLY 4-5 H2 sections total
 - This is a 500-600 word promo announcement, NOT a 2000-word guide
-- Maximum 1 H3 subsections under any one H2
-- NEVER include "Terms and Conditions" or "Responsible Gaming" headings
+- Maximum 1 H3 subsection under any one H2
+- NEVER include separate "Eligibility" section - merge with Key Details
 - Must include ONE "How to Sign Up" section at the end
 - Focus on ESSENTIAL info only
 
@@ -180,19 +180,18 @@ REQUIRED STRUCTURE (4-5 H2s max):
 [SHORTCODE]
 [H2: Overview] (why this offer matters - 2-3 sentences)
 [SHORTCODE]
-[H2: How to Claim] (worked example with dollar amounts)
+[H2: How to Claim the {keyword}] (worked example with dollar amounts)
 [SHORTCODE]
-[H2: Eligibility] (who qualifies - 2 sentences)
-[H2: How to Sign Up] (step-by-step numbered list)
+[H2: Key Details & Eligibility] (combine terms + who qualifies)
+[H2: How to Sign Up for {keyword}] (step-by-step numbered list)
 
 That's it. STOP after 4-5 H2s. This is a NEWS ANNOUNCEMENT, not a comprehensive review.
-
 """
 
     outline_text = generate_markdown(system=sys, user=user, temperature=get_temperature_by_section("outline"))
     tokens = parse_outline_tokens(outline_text)
 
-    # Post-process to enforce limits
+    # Post-process to enforce limits and merge eligibility
     if tokens:
         filtered = []
         h2_count = 0
@@ -202,13 +201,16 @@ That's it. STOP after 4-5 H2s. This is a NEWS ANNOUNCEMENT, not a comprehensive 
             if t["level"] == "intro" or t["level"] == "shortcode":
                 filtered.append(t)
             elif t["level"] == "h2":
+                # Skip standalone eligibility sections
+                if "eligibility" in t["title"].lower() and "details" not in t["title"].lower():
+                    continue
                 h2_count += 1
                 current_h2_h3s = 0
-                if h2_count <= 6:  # Max 6 H2s
+                if h2_count <= 5:  # Max 5 H2s
                     filtered.append(t)
             elif t["level"] == "h3":
                 current_h2_h3s += 1
-                if current_h2_h3s <= 2:  # Max 2 H3s per H2
+                if current_h2_h3s <= 1:  # Max 1 H3 per H2
                     filtered.append(t)
         
         tokens = filtered
@@ -219,30 +221,42 @@ That's it. STOP after 4-5 H2s. This is a NEWS ANNOUNCEMENT, not a comprehensive 
             {"level": "shortcode", "title": ""},
             {"level": "h2", "title": "Overview"},
             {"level": "shortcode", "title": ""},
-            {"level": "h2", "title": "How to Claim the Offer"},
+            {"level": "h2", "title": f"How to Claim the {keyword or 'Offer'}"},
             {"level": "shortcode", "title": ""},
-            {"level": "h2", "title": "Eligibility & Where It's Live"},
-            {"level": "h2", "title": "Offer Terms & Key Details"},
+            {"level": "h2", "title": "Key Details & Eligibility"},
             {"level": "shortcode", "title": ""},
-            {"level": "h2", "title": "How to Sign Up"}, 
+            {"level": "h2", "title": f"How to Sign Up for {keyword or 'This Promo'}"}, 
         ]
     return tokens
 
 def _build_terms_section(offer_row: dict | None, state: str) -> str:
+    """Build terms & conditions section without 1-800-GAMBLER."""
     if not offer_row:
         return ""
+    
     brand = (offer_row.get("brand") or "").strip()
     terms = (offer_row.get("terms") or "").strip()
-    parts = ["## Terms and Conditions"]
+    
+    parts = ["## Terms & Conditions"]
+    
     if terms:
-        parts.append(terms.replace("\\n", "\n").strip())
+        terms_clean = terms.replace("\\n", "\n").strip()
+        parts.append(f"{terms_clean}")
     else:
-        parts.append(f"Review full terms on the {brand} website.")
+        parts.append(f"Please review the full terms and conditions on the {brand} website before signing up. "
+                    "Offer available to new customers only. Must be 21+ and physically present in an eligible state.")
+    
+    
     return "\n\n".join(parts)
 
-def _build_default_title(offer_row: dict, sport: str = "", event_context: str = "") -> str:
+def _build_default_title(offer_row: dict, sport: str = "", event_context: str = "", keyword: str = "") -> str:
+    """Build default title using keyword if provided."""
+    if keyword:
+        return keyword.title()
+    
     brand = (offer_row.get("brand") or "").strip()
     title = f"{brand} Promo Code" if brand else "Sportsbook Promo"
+    
     if event_context:
         matchup = re.search(r'(.+?)\s+on\s+', event_context)
         if matchup:
@@ -250,11 +264,12 @@ def _build_default_title(offer_row: dict, sport: str = "", event_context: str = 
     elif sport:
         sport_names = {"nfl": "NFL", "nba": "NBA", "mlb": "MLB", "nhl": "NHL"}
         title = f"{title} for {sport_names.get(sport.lower(), sport.upper())}"
+    
     return title
 
 def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict | None, state: str,
                                   event_context: str = "", sport: str = "", switchboard_url: str = "",
-                                  target_date: datetime = None) -> str:
+                                  target_date: datetime = None, keyword: str = "") -> str:
     parts = []
     previous_content = ""
     brand = (offer_row.get("brand") or "").strip() if offer_row else ""
@@ -264,8 +279,7 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
 
     available_states = (offer_row or {}).get("states_list", [])
 
-    # CHANGE 1: Single pass for all internal links BEFORE generating sections
-    # Collect all section headings and context
+    # Collect all section headings for link generation
     all_section_contexts = []
     for t in tokens:
         if t["level"] not in ["intro", "shortcode"]:
@@ -273,13 +287,12 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
             all_section_contexts.append(heading)
     
     # Generate ALL internal links at once
-    combined_query = " ".join(all_section_contexts[:5])  # Use first 5 headings for context
+    combined_query = " ".join(all_section_contexts[:5])
     if not combined_query.strip():
-        combined_query = title or ss.get("keyword", "sports betting promo")
+        combined_query = keyword or title or "sports betting promo"
     
     st.info("🔗 Generating internal links for entire article...")
     try:
-        # Get 2x the number of sections to ensure we have enough links
         num_links_needed = min(len(all_section_contexts) * 2, 15)
         all_internal_links = suggest_links_for_brief(
             section_heading=combined_query,
@@ -294,16 +307,17 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
         st.warning(f"⚠️ Link generation failed: {e}")
         all_internal_links = []
     
-    # Create a pool of links to distribute
     link_pool = list(all_internal_links)
     used_link_urls = set()
 
-    # Generate intro if needed
+    # Generate intro
     if any(t["level"] == "intro" for t in tokens):
         if target_date:
             date_str = f"{target_date.strftime('%A')}, {target_date.strftime('%B')} {target_date.day}, {target_date.year}"
         else:
             date_str = today_long("US/Eastern")
+        
+        # Pass keyword to intro
         ps_intro = make_intro_prompt(
             brand=(offer_row.get("brand") if offer_row else "") or "",
             offer_text=(offer_row.get("offer_text") if offer_row else "") or "",
@@ -311,6 +325,7 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
             date_str=date_str,
             available_states=available_states,
             event_context=event_context,
+            keyword=keyword,  # Pass the keyword
         )
         intro_md = generate_markdown(ps_intro.system, ps_intro.user, temperature=ps_intro.temperature).strip()
         if intro_md.startswith("#"):
@@ -329,47 +344,72 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
         
         heading = t["title"] or ""
         heading_lower = heading.lower()
+        
+        # Dynamic heading updates
         if "sign up" in heading_lower and "how to" in heading_lower:
-            keyword = ss.get("keyword", "").strip() or ss.get("user_title", "").strip()
-            date_str = today_long("US/Eastern")
-            heading = f"How to Sign Up for the {keyword} on {date_str}" if keyword else f"How to Sign Up on {date_str}"
+            if keyword:
+                heading = f"How to Sign Up for {keyword}"
+            else:
+                heading = f"How to Sign Up on {date_str}"
+        elif "claim" in heading_lower and keyword:
+            heading = heading.replace("the Offer", keyword).replace("the offer", keyword)
         
         section_count += 1
         
+        # Section objectives - improved to avoid repetition
         if "overview" in heading_lower:
-            objective = "Write about WHY this offer is valuable. Focus on appeal. 3-4 sentences max."
+            objective = (
+                "Write about WHY this offer appeals to bettors. "
+                "Focus on value proposition and timing. "
+                "Use active voice throughout. 3-4 sentences maximum."
+            )
         elif "sign up" in heading_lower and "how to" in heading_lower:
-            objective = "CRITICAL: Output ONLY a numbered list (1-5). NO PARAGRAPHS."
-        elif "claim" in heading_lower or "how to" in heading_lower:
-            objective = f"Provide WORKED EXAMPLE using: {event_context}. First-person, show win/loss scenarios."
-        elif "eligibility" in heading_lower or "where" in heading_lower:
-            objective = "Briefly state who qualifies. 2-3 sentences."
-        elif "terms" in heading_lower or "details" in heading_lower:
-            objective = "Cover fine print: odds, expiration, wagering. 3-4 sentences."
+            objective = (
+                f"CRITICAL: Output ONLY a numbered list. NO PARAGRAPHS.\n"
+                f"Provide exactly 5 numbered steps for signing up.\n"
+                f"Use '{keyword or brand + ' promo'}' naturally in the steps.\n"
+                f"Write in active voice. Be specific and actionable."
+            )
+        elif "claim" in heading_lower or ("how to" in heading_lower and "sign" not in heading_lower):
+            objective = (
+                f"Provide a WORKED EXAMPLE using {event_context if event_context else 'a typical bet'}. "
+                f"Use first-person active voice: 'If I place a $50 bet on [specific]...' "
+                f"Show win and loss scenarios with exact calculations. "
+                f"Focus on the mechanics, not restating the offer."
+            )
+        elif "details" in heading_lower or "key" in heading_lower:
+            objective = (
+                f"Cover essential requirements in active voice: "
+                f"Who qualifies (21+ new users in eligible states), "
+                f"minimum odds, bonus expiration, wagering requirements. "
+                f"Be specific and concise. 3-4 sentences total. "
+                f"Do NOT list all states again if already mentioned."
+            )
         else:
-            objective = f"Write section under '{heading}'."
+            objective = f"Write content for '{heading}' using active voice throughout."
         
         brief = SectionBrief(
             section_id=f"sec-{uuid.uuid4().hex[:6]}",
             objective=objective,
-            audience="Beginner—intermediate US sports bettors",
+            audience="US sports bettors ages 21-65",
             constraints={},
-            facts_and_points=[f"Featured game: {event_context}"] if event_context and ("claim" in heading_lower or "how to" in heading_lower) else [],
+            facts_and_points=[f"Featured: {event_context}"] if event_context and "claim" in heading_lower else [],
             retrieved_snippets=[],
         )
         
-        query_parts = [heading, "sports betting promo", (offer_row or {}).get('brand', '')]
+        # RAG retrieval
+        query_parts = [heading, keyword or "sports betting", brand]
         query = " ".join(p for p in query_parts if p.strip())
         
         try:
-            _hits = query_articles(query, k=3 if section_count > 2 else 8, snippet_chars=300 if section_count > 2 else 400)
-            relevant = [h for h in _hits if h.get('score', 0) > 0.35][:5]
+            _hits = query_articles(query, k=3 if section_count > 2 else 5, snippet_chars=300)
+            relevant = [h for h in _hits if h.get('score', 0) > 0.35][:3]
             snips = [(h.get("snippet") or "").strip() for h in relevant]
             brief.retrieved_snippets = [{"snippet": s} for s in snips if s]
         except Exception:
             pass
 
-        # Distribute links from the pool (2-3 per section)
+        # Distribute links from pool
         section_links = []
         links_per_section = 2 if section_count <= 2 else 3
         
@@ -380,7 +420,8 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
                 used_link_urls.add(next_link.url)
         
         ps = make_promptsect(brief, offer_row or {}, section_links, disclaimer_for_state(state),
-                            previous_content=previous_content[-1500:], available_states=available_states)
+                            previous_content=previous_content[-1500:], available_states=available_states,
+                            keyword=keyword)
         body_md = generate_markdown(ps.system, ps.user, temperature=ps.temperature).strip()
         
         level = t["level"].lower()
@@ -391,6 +432,7 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
 
     full_article = "\n\n".join(parts).strip()
 
+    # Inject switchboard links
     if switchboard_url and offer_row:
         from src.switchboard_links import inject_switchboard_links
         brand = (offer_row.get("brand") or "").strip()
@@ -398,11 +440,12 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
         if brand and bonus_code:
             full_article = inject_switchboard_links(full_article, brand, bonus_code, switchboard_url, max_links=12)
 
+    # Add T&C at the bottom
     terms_section = _build_terms_section(offer_row, state)
     if terms_section:
         full_article = f"{full_article}\n\n{terms_section}"
     
-    # CHANGE 2: Convert markdown to HTML
+    # Convert to HTML
     st.info("🔄 Converting markdown to HTML...")
     html_article = markdown.markdown(
         full_article,
@@ -412,9 +455,8 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
     
     return html_article
 
-
 # =============================================================================
-# COMPACT MAIN UI - ALL INPUTS IN ONE CONTAINER
+# COMPACT MAIN UI
 # =============================================================================
 
 with st.container():
@@ -503,7 +545,6 @@ with st.container():
             selected_game = games[selected_idx]
             event_context = format_event_for_prompt(selected_game, target_datetime)
             
-            # Show what's selected
             is_prime = selected_game in prime if prime else False
             st.caption(f"📅 {event_context} {'⭐' if is_prime else ''}")
         else:
@@ -511,14 +552,17 @@ with st.container():
     except Exception as e:
         st.warning(f"⚠️ Could not fetch games: {e}")
     
-    default_title = _build_default_title(offer_row, sport=sport_selected, event_context=event_context)
+    with col_keyword:
+        ss["keyword"] = st.text_input("Keyword", value=ss.get("keyword", ""), 
+                                      placeholder="e.g., BetMGM promo code",
+                                      help="This will be used throughout the article instead of full offer names")
+    
+    # Generate title
+    default_title = _build_default_title(offer_row, sport=sport_selected, event_context=event_context, 
+                                         keyword=ss.get("keyword", ""))
     
     with col_title:
         ss["user_title"] = st.text_input("Title", value=ss.get("user_title") or default_title)
-    
-    with col_keyword:
-        ss["keyword"] = st.text_input("Keyword", value=ss.get("keyword", ""), 
-                                      placeholder="e.g., BetMGM promo")
     
     # Competitor URLs (optional, collapsed)
     with st.expander("Competitor URLs (optional)"):
@@ -526,23 +570,26 @@ with st.container():
 
 # Generate Outline button
 if st.button("Generate Outline", type="primary"):
-    comp_parts = [f"URL: {url}\n{scrape_competitor(url.strip())[:1500]}" 
-                  for url in comp_urls_txt.splitlines() if url.strip()]
-    comp_text = "\n\n".join(comp_parts)[:6000]
-    
-    tokens = ai_outline_tokens_rag(
-        keyword=ss["keyword"].strip() or ss["user_title"].strip(),
-        exact_title=ss["user_title"].strip(),
-        brand=offer_row.get("brand", ""),
-        offer_text=offer_row.get("offer_text", ""),
-        page_type_hint=(offer_row.get("page_type") or "").strip(),
-        comp_urls_txt=comp_text,
-    )
-    ss["tokens_cached"] = tokens
-    ss["box_mode"] = "outline"
-    ss["pending_article_box"] = tokens_to_outline_text(tokens)
-    st.success("✅ Outline ready")
-    st.rerun()
+    if not ss["keyword"]:
+        st.error("Please enter a keyword first")
+    else:
+        comp_parts = [f"URL: {url}\n{scrape_competitor(url.strip())[:1500]}" 
+                      for url in comp_urls_txt.splitlines() if url.strip()]
+        comp_text = "\n\n".join(comp_parts)[:6000]
+        
+        tokens = ai_outline_tokens_rag(
+            keyword=ss["keyword"].strip(),
+            exact_title=ss["user_title"].strip(),
+            brand=offer_row.get("brand", ""),
+            offer_text=offer_row.get("offer_text", ""),
+            page_type_hint=(offer_row.get("page_type") or "").strip(),
+            comp_urls_txt=comp_text,
+        )
+        ss["tokens_cached"] = tokens
+        ss["box_mode"] = "outline"
+        ss["pending_article_box"] = tokens_to_outline_text(tokens)
+        st.success("✅ Outline ready")
+        st.rerun()
 
 # Editor with tabs
 st.divider()
@@ -632,7 +679,9 @@ col_gen, col_fmt, col_name, col_dl = st.columns([2, 1.5, 2, 1])
 with col_gen:
     gen_label = "Generate Draft" if ss["box_mode"] == "outline" else "Regenerate"
     if st.button(gen_label, type="primary", use_container_width=True):
-        if ss["box_mode"] == "outline":
+        if not ss["keyword"]:
+            st.error("Please enter a keyword first")
+        elif ss["box_mode"] == "outline":
             tokens = parse_outline_tokens(ss["article_box"])
             if tokens:
                 ss["tokens_cached"] = tokens
@@ -641,9 +690,15 @@ with col_gen:
         if tokens:
             with st.spinner("Generating..."):
                 full_md = generate_article_from_tokens(
-                    tokens=tokens, title=ss["user_title"].strip(), offer_row=offer_row,
-                    state="ALL", event_context=event_context, sport=sport_selected,
-                    switchboard_url=ss.get("switchboard_url", ""), target_date=target_datetime,
+                    tokens=tokens, 
+                    title=ss["user_title"].strip(), 
+                    offer_row=offer_row,
+                    state="ALL", 
+                    event_context=event_context, 
+                    sport=sport_selected,
+                    switchboard_url=ss.get("switchboard_url", ""), 
+                    target_date=target_datetime,
+                    keyword=ss.get("keyword", ""),  # Pass keyword
                 )
                 ss["box_mode"] = "draft"
                 ss["pending_article_box"] = full_md
@@ -651,19 +706,20 @@ with col_gen:
                 st.rerun()
 
 with col_fmt:
-    export_fmt = st.selectbox("Format", ["Markdown", "HTML", "Word"], label_visibility="collapsed")
+    export_fmt = st.selectbox("Format", ["HTML", "Markdown", "Word"], label_visibility="collapsed")
 
 with col_name:
     export_name = st.text_input("Filename", "article", label_visibility="collapsed")
 
 with col_dl:
     content = ss.get("article_box", "").strip()
-    if export_fmt == "Markdown":
+    if export_fmt == "HTML":
+        data = content.encode("utf-8")
+        ext = ".html"
+    elif export_fmt == "Markdown":
+        # Convert HTML back to markdown if needed
         data = content.encode("utf-8")
         ext = ".md"
-    elif export_fmt == "HTML":
-        data = f"<article>\n{content.replace(chr(10), '<br>')}\n</article>".encode("utf-8")
-        ext = ".html"
     else:
         from docx import Document
         buf = io.BytesIO()
