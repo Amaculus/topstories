@@ -12,6 +12,7 @@ from datetime import datetime, date, timedelta
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
 import markdown
+import pandas as pd
 
 # -----------------------------------------------------------------------------
 # Env & defaults
@@ -81,10 +82,35 @@ def init_state():
     ss.setdefault("tokens_cached", [])
     ss.setdefault("use_sports", False)  # Default to unchecked
     ss.setdefault("mo_launch", False)
+    ss.setdefault("selected_alt_offers", [])  # List of alternative offer IDs
+
 init_state()
 ss = st.session_state
 
 # ---------------- Helpers ----------------
+
+def get_alternative_offers(offers_df: pd.DataFrame, main_offer_row: dict) -> list[dict]:
+    """Find other offers from the same brand as the main offer."""
+    if offers_df.empty or not main_offer_row:
+        return []
+    
+    main_brand = (main_offer_row.get("brand") or "").strip().lower()
+    main_offer_id = main_offer_row.get("offer_id", "")
+    
+    if not main_brand:
+        return []
+    
+    # Filter for same brand, different offer_id
+    alt_offers = []
+    for _, row in offers_df.iterrows():
+        row_brand = (row.get("brand") or "").strip().lower()
+        row_offer_id = row.get("offer_id", "")
+        
+        if row_brand == main_brand and row_offer_id != main_offer_id:
+            alt_offers.append(row.to_dict())
+    
+    return alt_offers
+
 def today_long(tz: str = "US/Eastern") -> str:
     try:
         now = datetime.now(ZoneInfo(tz))
@@ -102,7 +128,7 @@ def scrape_competitor(url: str) -> str:
     except Exception as e:
         return f"[FETCH_FAILED] {url} :: {e}"
 
-TOKEN_RE = re.compile(r"^\s*\[(?P<label>intro|shortcode|h[1-6])(?:\s*:\s*(?P<title>.+?))?\]\s*$", re.I)
+TOKEN_RE = re.compile(r"^\s*\[(?P<label>intro|shortcode(?:_main|_\d+)?|h[1-6])(?:\s*:\s*(?P<title>.+?))?\]\s*$", re.I)
 
 def parse_outline_tokens(text: str) -> list[dict]:
     tokens = []
@@ -115,7 +141,15 @@ def parse_outline_tokens(text: str) -> list[dict]:
             continue
         label = m.group("label").lower()
         title = (m.group("title") or "").strip()
-        level = "intro" if label == "intro" else "shortcode" if label == "shortcode" else label
+        
+        # Handle different shortcode types
+        if label.startswith("shortcode"):
+            level = label  # Keep full label like "shortcode_main", "shortcode_1"
+        elif label == "intro":
+            level = "intro"
+        else:
+            level = label
+            
         tokens.append({"level": level, "title": title})
     return tokens
 
@@ -125,8 +159,9 @@ def tokens_to_outline_text(tokens: list[dict]) -> str:
         lvl = t["level"]
         if lvl == "intro":
             out.append("[INTRO]")
-        elif lvl == "shortcode":
-            out.append("[SHORTCODE]")
+        elif lvl.startswith("shortcode"):
+            # Render with label
+            out.append(f"[{lvl.upper()}]")
         else:
             out.append(f"[{lvl.upper()}: {t['title']}]")
     return "\n".join(out)
@@ -186,7 +221,7 @@ def validate_keyword_in_outline(tokens: list[dict], keyword: str) -> bool:
 
 def ai_outline_tokens_rag(*, keyword: str, exact_title: str | None = None, brand: str | None = None, 
                           offer_text: str | None = None, page_type_hint: str | None = None, 
-                          comp_urls_txt: str | None = None, is_mo_launch: bool = False) -> list[dict]:
+                          comp_urls_txt: str | None = None, is_mo_launch: bool = False, num_offers: int = 1) -> list[dict]:
     try:
         hits = query_articles(keyword, k=6, snippet_chars=800)
     except Exception:
@@ -264,9 +299,12 @@ OUTPUT FORMAT (STRICT):
   [H2: ...]
   [H3: ...]  (only when helpful under the preceding H2)
 - Start with a single [INTRO]; keep intro 2–3 sentences.
-- Insert [SHORTCODE] tokens where promo cards should appear (one after intro, then 3-4 throughout)
-- Do NOT include CTAs in the outline (those are inserted during drafting).
-- Keep headings short, concrete, and scannable.
+- Insert [SHORTCODE_MAIN], [SHORTCODE_1], [SHORTCODE_2] tokens where promo cards should appear
+- [SHORTCODE_MAIN] = primary offer (required, place after intro)
+- [SHORTCODE_1] = first alternative offer (if selected)
+- [SHORTCODE_2] = second alternative offer (if selected)
+- You have {num_offers} total offer(s) available
+- Place shortcodes strategically throughout (after intro, between sections, before sign-up)- Keep headings short, concrete, and scannable.
 - Use the keyword "{keyword}" in headings where natural, not full offer titles
 
 CRITICAL LENGTH CONSTRAINTS (STRICTLY ENFORCE):
@@ -343,13 +381,15 @@ That's it. STOP after 4-5 H2s. This is a NEWS ANNOUNCEMENT, not a comprehensive 
         else:
             tokens = [
                 {"level": "intro", "title": ""},
-                {"level": "shortcode", "title": ""},
+                {"level": "shortcode_main", "title": ""},  # CHANGED
                 {"level": "h2", "title": f"{keyword} Overview"},
-                {"level": "shortcode", "title": ""},
+                {"level": "shortcode_main", "title": ""},  # CHANGED
+                {"level": "shortcode_1", "title": ""} if num_offers > 1 else None,  # CONDITIONAL
+                {"level": "shortcode_2", "title": ""} if num_offers > 2 else None,  # CONDITIONAL
                 {"level": "h2", "title": f"How to Claim the {keyword or 'Offer'}"},
-                {"level": "shortcode", "title": ""},
+                {"level": "shortcode_2", "title": ""} if num_offers > 2 else None,  # CONDITIONAL
                 {"level": "h2", "title": "Key Details & Eligibility"},
-                {"level": "shortcode", "title": ""},
+                {"level": "shortcode_main", "title": ""},
                 {"level": "h2", "title": f"How to Sign Up for {keyword or 'This Promo'}"}, 
             ]
     return tokens
@@ -398,11 +438,17 @@ def _build_default_title(offer_row: dict, sport: str = "", event_context: str = 
 
 def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict | None, state: str,
                                   event_context: str = "", sport: str = "", switchboard_url: str = "",
-                                  target_date: datetime = None, keyword: str = "", is_mo_launch: bool = False) -> str:
+                                  target_date: datetime = None, keyword: str = "", is_mo_launch: bool = False,    alt_offers: list[dict] = None  # NEW
+                                    ) -> str:
+
+      
     parts = []
     previous_content = ""
     brand = (offer_row.get("brand") or "").strip() if offer_row else ""
-    
+        # Handle alternative offers
+    if alt_offers is None:
+        alt_offers = []
+    all_offers = [offer_row] + alt_offers if offer_row else alt_offers
     if title:
         parts.append(f"# {title}")
 
@@ -468,12 +514,35 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
         previous_content = intro_md
 
     section_count = 0
+
     for t in tokens:
         if t["level"] == "intro":
             continue
-        if t["level"].lower() == "shortcode":
-            shortcode = (offer_row or {}).get("shortcode", "") if offer_row else ""
-            parts.append(shortcode.strip() if shortcode.strip() else render_offer_block(offer_row or {}))
+            
+        if t["level"].startswith("shortcode"):
+            # Determine which offer based on label
+            if t["level"] == "shortcode_main" or t["level"] == "shortcode":
+                current_offer = offer_row
+            elif t["level"] == "shortcode_1" and len(all_offers) > 1:
+                current_offer = all_offers[1]  # First alternative
+            elif t["level"] == "shortcode_2" and len(all_offers) > 2:
+                current_offer = all_offers[2]  # Second alternative
+            elif t["level"].startswith("shortcode_"):
+                # Extract number from shortcode_N
+                try:
+                    idx = int(t["level"].split("_")[1])
+                    if idx < len(all_offers):
+                        current_offer = all_offers[idx]
+                    else:
+                        current_offer = offer_row  # Fallback to main
+                except:
+                    current_offer = offer_row
+            else:
+                current_offer = offer_row
+            
+            if current_offer:
+                shortcode = (current_offer.get("shortcode") or "").strip()
+                parts.append(shortcode if shortcode else render_offer_block(current_offer))
             continue
         
         heading = t["title"] or ""
@@ -685,6 +754,40 @@ with st.container():
         sel_idx = st.selectbox("Offer", options=list(range(len(opt_pairs))), 
                                format_func=lambda i: opt_pairs[i][1], key="offer_idx")
         offer_row = get_offer_by_id(offers_df, opt_pairs[sel_idx][0])
+
+                # NEW: Alternative offers section
+        alt_offers = get_alternative_offers(offers_df, offer_row)
+        if alt_offers:
+            with st.expander(f"📎 Alternative {offer_row.get('brand', '')} Offers (Optional)", expanded=False):
+                st.caption("Include additional promo codes from this operator in the article")
+                
+                # Build options for multiselect
+                alt_options = []
+                for alt in alt_offers:
+                    code = (alt.get("bonus_code") or "").strip()
+                    offer_text = (alt.get("offer_text") or "").strip()[:50]
+                    label = f"{code}: {offer_text}" if code else offer_text
+                    alt_options.append({"id": alt["offer_id"], "label": label, "data": alt})
+                
+                # Multiselect
+                selected_labels = st.multiselect(
+                    "Select additional offers to include",
+                    options=[opt["label"] for opt in alt_options],
+                    default=[],
+                    help="These will be inserted as additional promo cards after the main offer"
+                )
+                
+                # Store selected alternative offers
+                ss["selected_alt_offers"] = [
+                    opt["data"] for opt in alt_options if opt["label"] in selected_labels
+                ]
+        else:
+            ss["selected_alt_offers"] = []
+
+        # Show summary
+        if ss["selected_alt_offers"]:
+            codes = [o.get("bonus_code", "?") for o in ss["selected_alt_offers"]]
+            st.caption(f"✓ Including {len(ss['selected_alt_offers'])} alternative offer(s): {', '.join(codes)}")
     
     with col_refresh:
         st.write("")
@@ -808,7 +911,8 @@ if st.button("Generate Outline", type="primary"):
         comp_parts = [f"URL: {url}\n{scrape_competitor(url.strip())[:1500]}" 
                       for url in comp_urls_txt.splitlines() if url.strip()]
         comp_text = "\n\n".join(comp_parts)[:6000]
-        
+        num_total_offers = 1 + len(ss.get("selected_alt_offers", []))  # ADD THIS LINE
+
         tokens = ai_outline_tokens_rag(
             keyword=ss["keyword"].strip(),
             exact_title=ss["user_title"].strip(),
@@ -817,6 +921,8 @@ if st.button("Generate Outline", type="primary"):
             page_type_hint=(offer_row.get("page_type") or "").strip(),
             comp_urls_txt=comp_text,
             is_mo_launch=ss["mo_launch"],
+            num_offers=num_total_offers,  # NEW
+
         )
         ss["tokens_cached"] = tokens
         ss["box_mode"] = "outline"
@@ -933,6 +1039,8 @@ with col_gen:
                     target_date=target_datetime,
                     keyword=ss.get("keyword", ""),
                     is_mo_launch=ss["mo_launch"],
+                    alt_offers=ss.get("selected_alt_offers", []),  # NEW
+
                 )
                 ss["box_mode"] = "draft"
                 ss["pending_article_box"] = full_md
