@@ -58,9 +58,29 @@ def _extract_heading_from_objective(obj_text: str) -> str:
     m = re.search(r"titled\s+'([^']+)'", obj_text or "", flags=re.I)
     return (m.group(1).strip() if m else "").strip()
 
-# ---------- main factories ----------
+def extract_common_phrases(text: str) -> list[str]:
+    """Extract common filler phrases that should be avoided in subsequent sections."""
+    if not text:
+        return []
+    
+    # Patterns for common repetitive structures
+    patterns = [
+        r"To (?:qualify|claim|get|take advantage|access|receive|sign up) (?:for|this|the) [\w\s]{1,30}",
+        r"In order to [\w\s]{1,30}",
+        r"(?:This|The) (?:offer|promo|bonus) (?:is|allows|gives|provides) [\w\s]{1,30}",
+        r"(?:New|Eligible) (?:users|customers|bettors) can [\w\s]{1,30}",
+        r"available (?:to|for) (?:new|eligible) [\w\s]{1,30}",
+    ]
+    
+    found = []
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        found.extend([m.strip() for m in matches if len(m.strip()) > 10])
+    
+    # Deduplicate and return unique phrases
+    return list(set(found))[:5]  # Limit to top 5 to avoid overwhelming the prompt
 
-# src/prompt_factory.py - make_promptsect function
+# ---------- main factories ----------
 
 def make_promptsect(
     brief: SectionBrief,
@@ -71,6 +91,8 @@ def make_promptsect(
     previous_content: str = "",
     available_states: list[str] = None,
     keyword: str = "",
+    current_keyword_count: int = 0,
+    target_keyword_total: int = 9,
 ) -> PromptSect:
     """
     Build a section-writing prompt (system+user) for a single H2/H3.
@@ -80,7 +102,12 @@ def make_promptsect(
     offer_text = (offer_row.get("offer_text") or "").strip()
     bonus_code = (offer_row.get("bonus_code") or "").strip()
     focus_term = keyword.strip() if keyword else f"{brand} promo"
-
+    
+    # Extract critical offer details
+    expiration_days = offer_row.get("bonus_expiration_days", 7)
+    min_odds = offer_row.get("minimum_odds", "")
+    wagering = offer_row.get("wagering_requirement", "")
+    bonus_amount = offer_row.get("bonus_amount", "")
 
     # Normalize snippets
     snips_list = [t for t in (_coalesce_text(s) for s in (brief.retrieved_snippets or [])) if t]
@@ -98,6 +125,7 @@ def make_promptsect(
         import streamlit as st
         print(f"**Links being added to prompt:**")
         print(links_md)
+    
     # Heading
     heading_title = _extract_heading_from_objective(brief.objective) or "Section"
 
@@ -113,30 +141,38 @@ def make_promptsect(
     style_guide = get_style_instructions()
 
     # Detect if this is a numbered list section
-    is_numbered_list = "NUMBERED STEP-BY-STEP" in brief.objective
+    is_numbered_list = "NUMBERED STEP-BY-STEP" in brief.objective or "numbered list" in brief.objective.lower()
+    
+    # Extract blacklisted phrases from previous content
+    blacklisted_phrases = extract_common_phrases(previous_content) if previous_content else []
+    constraints = brief.constraints or {}
+    blacklisted_phrases.extend(constraints.get("avoid_phrases", []))
+    blacklisted_phrases = list(set(blacklisted_phrases))[:8]  # Limit to 8 most important
 
     # Rules - adjust based on format
     if is_numbered_list:
         rules = [
             "YOU MUST OUTPUT A NUMBERED LIST.",
             "Format: 1. [sentence] 2. [sentence] 3. [sentence] 4. [sentence] 5. [sentence]",
-            f"Mention '{brand} bonus code {bonus_code}' in at least 2 steps.",
+            f"Include '{focus_term}' in at least 2 steps naturally.",
             "Use 1-2 internal links naturally within the steps.",
             "Explain each step thoroughly while respecting style guidelines",
             "Do NOT include an introduction or conclusion - ONLY the numbered list.",
+            f"MANDATORY: Use the exact phrase '{keyword}' at least once in the list.",
         ]
         format_instruction = "OUTPUT FORMAT: Numbered list (1. 2. 3. 4. 5.) explaining each step thoroughly."
     else:
         rules = [
             "Begin directly under the heading with helpful, concise copy (no fluff).",
-            "Match the STYLE of the examples, but use the FACTS from the promo details.",
-            "MUST use at least 2-3 internal links. They are pre-selected for relevance, Use descriptive anchor text that flows naturally in your prose",
+            "Match the STYLE of the examples, but use the FACTS from the SOURCE OF TRUTH section.",
+            "MUST use at least 2-3 internal links. They are pre-selected for relevance. Use descriptive anchor text that flows naturally.",
             "Do NOT copy sentences from style examples - paraphrase and use your own phrasing.",
             "Vary your sentence openings - don't repeat previous patterns.",
             "Maintain neutral, compliant tone; avoid marketing hype and prohibited phrases.",
             "No tables, no HTML.",
             f"Use '{focus_term}' as the main reference, not the full offer name",
             "Do NOT print or restate the heading; write paragraphs only.",
+            f"MANDATORY: Include the exact phrase '{keyword}' at least once naturally in this section's body text.",
         ]
         format_instruction = "OUTPUT FORMAT: 2-4 flowing paragraphs."
     
@@ -145,14 +181,23 @@ def make_promptsect(
     else:
         rules.append("Include at most one brief, natural CTA sentence if it serves the reader.")
 
-    # System prompt
+    # System prompt with stronger fact-checking emphasis
     sys = (
         "You are an expert SEO content writer specializing in US sports betting promo announcements. "
         "Your content must be compliant, authentic, and match the house style exactly. "
-        "Avoid marketing clichés, repetitive phrasing, and write like an informed person sharing useful information."
+        "Avoid marketing clichés, repetitive phrasing, and write like an informed person sharing useful information. "
+        "\n\n"
+        "CRITICAL INSTRUCTION: You must use ONLY the exact offer details provided in the SOURCE OF TRUTH section. "
+        "NEVER invent odds, expiration dates, wagering requirements, or other terms. "
+        "If a detail is not explicitly provided, say 'see full terms' or 'check the operator's website' instead of guessing. "
+        "Making up facts damages credibility and violates compliance standards."
     )
 
-    # User prompt
+    # Keyword tracking info
+    keyword_progress = f"(Used {current_keyword_count}/{target_keyword_total} times so far)"
+    keyword_needed = current_keyword_count < target_keyword_total
+
+    # User prompt with SOURCE OF TRUTH section
     user = f"""WRITE UNDER THIS HEADING EXACTLY (DO NOT PRINT THE HEADING):
 {heading_title}
 
@@ -163,6 +208,25 @@ OBJECTIVE:
 
 AUDIENCE:
 {brief.audience or "Beginner—intermediate US sports bettors (ages 21-65)"}
+
+=== SOURCE OF TRUTH - DO NOT DEVIATE ===
+These are EXACT facts from the offer sheet. Do NOT modify, invent, or approximate:
+
+CORE OFFER DETAILS:
+- Brand: {brand or "[not provided]"}
+- Offer: {offer_text or "[not provided]"}
+- Bonus Amount: {bonus_amount or "[not provided]"}
+- Bonus Code: {bonus_code or "[not provided]"}
+- Available in: {states_text}
+
+CRITICAL TERMS (use these EXACT values if you mention them):
+- Expiration: {expiration_days} days (say "expire in {expiration_days} days" - NOT 7, NOT 30, NOT 14 - exactly {expiration_days})
+- Minimum Odds: {min_odds if min_odds else "[see terms - do not guess]"}
+- Wagering: {wagering if wagering else "[see terms - do not guess]"}
+
+RULE: If you mention expiration, odds requirements, or wagering rules, use ONLY the values above or say "check full terms". NEVER invent numbers.
+
+=== END SOURCE OF TRUTH ===
 
 {style_guide}
 
@@ -175,11 +239,7 @@ STYLE EXAMPLES - Match the tone, rhythm, and voice (NOT the facts):
 - Pacing (front-load key info, details later)
 - Natural conversational tone without marketing hype
 
-PROMO FACTS (use these exact details - SOURCE OF TRUTH):
-- Brand: {brand or "(none)"}
-- Offer: {offer_text or "(none)"}
-- Bonus code: {bonus_code or "(none)"}
-- Available in: {states_text}
+BUT REMEMBER: Use the FACTS from SOURCE OF TRUTH, not from these examples.
 
 ADDITIONAL FACTS (if relevant):
 {facts_md}
@@ -189,6 +249,16 @@ INTERNAL LINKS (MUST use at least 2-3 of these):
 
 CRITICAL: You MUST include at least 2 internal links in this section. These links are pre-selected for relevance and value. Use descriptive anchor text that flows naturally in your prose.
 
+KEYWORD USAGE:
+Your primary focus term is: "{keyword}" {keyword_progress}
+
+Requirements:
+- {"MUST use" if keyword_needed else "Should use"} the exact phrase "{keyword}" at least ONCE in this section
+- Use it naturally in a sentence, not forced or awkward
+- Good: "Sign up with {keyword} to unlock this offer"
+- Bad: "The {keyword} {keyword} is available now" (repetitive)
+- This is in addition to any internal link anchor text
+
 PREVIOUSLY WRITTEN (DO NOT REPEAT - the reader already saw this):
 {previous_content or "(this is the first section)"}
 
@@ -196,7 +266,23 @@ PREVIOUSLY WRITTEN (DO NOT REPEAT - the reader already saw this):
 DO NOT repeat these unless specifically relevant to this section's objective.
 Your job is to ADD NEW INFORMATION specific to "{heading_title}", not restate the intro.
 
-PHRASING VARIETY REQUIREMENTS (CRITICAL):
+ANTI-REPETITION RULES (CRITICAL):
+Review what you've already written in PREVIOUSLY WRITTEN content.
+
+DO NOT repeat:
+- Sentence structures you see there (if you see "To qualify for", don't use "To [verb] for")
+- Opening phrases (if you see "This offer allows", don't use "This promo gives")  
+- Key sentences or concepts already covered
+- The same information from previous sections
+
+{"PHRASES TO AVOID (already overused):" if blacklisted_phrases else ""}
+{chr(10).join(f"❌ {phrase}" for phrase in blacklisted_phrases) if blacklisted_phrases else ""}
+
+Start this section with a DIFFERENT structure than previous sections.
+Vary your vocabulary - if previous sections used "qualify", try "eligible" or "meet requirements".
+If previous sections opened with "To [verb]", open with a question, statement, or direct instruction instead.
+
+PHRASING VARIETY REQUIREMENTS:
 - Do NOT start with "To take advantage of..." or "To qualify for..." or "To get started with..."
 - Vary your openings: use questions, statements, direct instructions, examples
 - Good openings: "Here's how it works:" / "Claiming this is simple:" / "You'll need..." / "Start by..." / "For example, if I..."
@@ -215,9 +301,7 @@ DISCLAIMER (append if required):
 RULES:
 - """ + "\n- ".join(rules)
 
-    return PromptSect(system=sys, user=user, rules=rules, temperature=0.5)
-
-# src/prompt_factory.py - make_intro_prompt function
+    return PromptSect(system=sys, user=user, rules=rules, temperature=0.4)
 
 def make_intro_prompt(
     *,
@@ -227,14 +311,20 @@ def make_intro_prompt(
     date_str: str,
     available_states: list[str],
     event_context: str = "",
-    keyword: str = "",  # ADD THIS PARAMETER
+    keyword: str = "",
+    is_mo_launch: bool = False,
+    bonus_expiration_days: int = 7,
+    bonus_amount: str = "",
 ) -> PromptSect:
     """Build the lede/intro prompt with natural date and event integration."""
     sys = (
         "You are an expert sports betting news writer. "
         "Write a concise, engaging intro paragraph for a promo announcement article. "
         "Be factual and compliant - avoid marketing hype. "
-        "The intro must be ONE flowing paragraph with natural transitions."
+        "The intro must be ONE flowing paragraph with natural transitions. "
+        "\n\n"
+        "CRITICAL: Use ONLY the exact offer details provided. Never invent expiration dates, "
+        "odds requirements, or other terms. If not provided, omit rather than guess."
     )
 
     focus_term = keyword.strip() if keyword else f"{brand} promo"
@@ -257,85 +347,119 @@ def make_intro_prompt(
 
     style_guide = get_style_instructions()
 
-# Build context-aware instructions
-    if event_context:
+    # Build context-aware instructions for Missouri launch
+    if is_mo_launch:
         context_instruction = f"""
-    Write a natural 3-4 sentence intro paragraph for this {brand} promo.
+Write a natural 3-4 sentence intro paragraph for this Missouri sports betting launch promo.
 
-    CONTEXT:
-    - Featured Event: {event_context}
-    - Date: {date_str}
-    - Offer: {offer_text}
-    - Bonus Code: {bonus_code}
-    - States: {states_sentence}
+CONTEXT:
+- Missouri Launch Timeline: Registration opens November 17, 2024. Full sports betting launches December 1, 2024.
+- Offer: {offer_text}
+- Bonus Code: {bonus_code}
+- State: Missouri only
 
-    Your intro should:
-    - Hook with the offer value and tie it to the upcoming event naturally
-    - Mention the bonus code twice in a way that flows
-    - Include the date/event context organically (don't force it)
-    - State which users are eligible
+Your intro should:
+- Hook with the launch timing and offer value
+- Mention both key dates (registration Nov 17, full launch Dec 1)
+- Reference the bonus code twice naturally
+- Emphasize this is for the Missouri launch
 
-    Write as ONE flowing paragraph. Be conversational - like you're texting a friend about a good deal.
+Write as ONE flowing paragraph. Be conversational - like breaking news about an exciting opportunity.
 
-    GOOD EXAMPLE (match this natural style):
-    Unlock $200 in bonus bets by signing up with the bet365 bonus code TOPACTION ahead of Monday Night Football tonight. Register with the bet365 bonus code TOPACTION to place a $5 bet and receive $200 in bonus bets, win or lose. This promo is available to new users in AZ, CO, IA, IL, IN, KS, KY, LA, MD, NC, NJ, OH, PA, TN, VA. Claim this bet365 promo to bet the Chiefs vs. Jaguars on Monday Night Football at 8:15 p.m. ET on ESPN.
+GOOD EXAMPLE (match this natural style):
+Missouri residents can sign up for sports betting starting November 17 with the DraftKings Missouri promo code to claim $300 in bonus bets ahead of the state's full launch on December 1. Register early with the DraftKings Missouri promo code BETACTION and place a $5 bet to receive $300 in bonus bets instantly. This Missouri-only offer allows new users to get a head start on sports betting before the official December 1 launch date.
 
-    Notice how it:
-    - Leads with value ("Unlock $200")
-    - Connects to the event naturally ("ahead of Monday Night Football tonight")
-    - Mentions the code twice without sounding repetitive
-    - States eligibility clearly but doesn't belabor it
-    - Sounds like useful information, not a sales pitch
-    """
+Notice how it:
+- Leads with the launch timeline
+- Integrates both dates naturally
+- Mentions the code twice without repetition
+- Focuses on the launch opportunity
+"""
+    elif event_context:
+        context_instruction = f"""
+Write a natural 3-4 sentence intro paragraph for this {brand} promo.
+
+CONTEXT:
+- Featured Event: {event_context}
+- Date: {date_str}
+- Offer: {offer_text}
+- Bonus Code: {bonus_code}
+- States: {states_sentence}
+
+Your intro should:
+- Hook with the offer value and tie it to the upcoming event naturally
+- Mention the bonus code twice in a way that flows
+- Include the date/event context organically (don't force it)
+- State which users are eligible
+
+Write as ONE flowing paragraph. Be conversational - like you're texting a friend about a good deal.
+
+GOOD EXAMPLE (match this natural style):
+Unlock $200 in bonus bets by signing up with the bet365 bonus code TOPACTION ahead of Monday Night Football tonight. Register with the bet365 bonus code TOPACTION to place a $5 bet and receive $200 in bonus bets, win or lose. This promo is available to new users in AZ, CO, IA, IL, IN, KS, KY, LA, MD, NC, NJ, OH, PA, TN, VA. Claim this bet365 promo to bet the Chiefs vs. Jaguars on Monday Night Football at 8:15 p.m. ET on ESPN.
+
+Notice how it:
+- Leads with value ("Unlock $200")
+- Connects to the event naturally ("ahead of Monday Night Football tonight")
+- Mentions the code twice without sounding repetitive
+- States eligibility clearly but doesn't belabor it
+- Sounds like useful information, not a sales pitch
+"""
     else:
         context_instruction = f"""
-    Write a natural 3-4 sentence intro paragraph for this {brand} promo.
+Write a natural 3-4 sentence intro paragraph for this {brand} promo.
 
-    CONTEXT:
-    - Date: {date_str}
-    - Offer: {offer_text}
-    - Bonus Code: {bonus_code}
-    - States: {states_sentence}
+CONTEXT:
+- Date: {date_str}
+- Offer: {offer_text}
+- Bonus Code: {bonus_code}
+- States: {states_sentence}
 
-    Your intro should:
-    - Hook with the offer value
-    - Mention the bonus code twice naturally
-    - Include today's date in a conversational way
-    - State which users are eligible
+Your intro should:
+- Hook with the offer value
+- Mention the bonus code twice naturally
+- Include today's date in a conversational way
+- State which users are eligible
 
-    Write as ONE flowing paragraph. Be conversational - like you're texting a friend about a good deal.
+Write as ONE flowing paragraph. Be conversational - like you're texting a friend about a good deal.
 
-    GOOD EXAMPLE (match this natural style):
-    New FanDuel users can claim up to $200 in bonus bets with the FanDuel promo code today, October 14, 2025. Sign up with the FanDuel promo code to place a $5+ bet and receive $200 in bonus bets instantly. This offer is available to new customers in Arizona, Colorado, and 15 other states nationwide.
+GOOD EXAMPLE (match this natural style):
+New FanDuel users can claim up to $200 in bonus bets with the FanDuel promo code today, October 14, 2025. Sign up with the FanDuel promo code to place a $5+ bet and receive $200 in bonus bets instantly. This offer is available to new customers in Arizona, Colorado, and 15 other states nationwide.
 
-    Notice how it:
-    - Leads with value ("claim up to $200")
-    - Includes the date naturally ("today, October 14, 2025")
-    - Mentions the code twice without repetition
-    - Keeps it brief and useful, not hypey
-    """
+Notice how it:
+- Leads with value ("claim up to $200")
+- Includes the date naturally ("today, October 14, 2025")
+- Mentions the code twice without repetition
+- Keeps it brief and useful, not hypey
+"""
 
     rules = [
         "Write as ONE flowing paragraph (not separate quoted sentences)",
         "Use exact dollar amounts and facts from the promo details",
         f"Mention '{brand} bonus code {bonus_code}' twice naturally",
         "Be conversational and useful - avoid marketing hype",
-        "List ALL states explicitly if multiple states",
+        "List ALL states explicitly if multiple states" if not is_mo_launch else "Focus on Missouri launch timing",
         "NO exclamation points anywhere",
         "Don't overuse contractions. Use them naturally. (you will, not you'll)",
         f"Use '{focus_term}' as the main reference, not the full offer name",
         "Sound conversational but professional",
+        f"CRITICAL: If mentioning expiration, say 'expire in {bonus_expiration_days} days' - no other number",
     ]
 
     user = f"""Write a 3-4 sentence intro paragraph following this structure:
 
 {context_instruction}
 
-PROMO DETAILS (use exact amounts and facts):
+=== SOURCE OF TRUTH - DO NOT DEVIATE ===
 - Brand: {brand}
 - Offer: {offer_text}
+- Bonus Amount: {bonus_amount if bonus_amount else "[use amount from offer text]"}
 - Bonus code: {bonus_code}
 - States: {states_list}
+- Expiration: {bonus_expiration_days} days (if you mention it, say "{bonus_expiration_days} days" exactly)
+{"- Launch Type: Missouri registration (Nov 17) and full launch (Dec 1)" if is_mo_launch else ""}
+
+CRITICAL: Use these exact values. Do NOT invent or modify any numbers.
+=== END SOURCE OF TRUTH ===
 
 {style_guide}
 
@@ -344,11 +468,7 @@ CRITICAL FORMAT REQUIREMENTS:
 - NO quotation marks around sentences
 - NO separating sentences into quoted blocks
 - Natural transitions between sentences
-- Integrate the date naturally (e.g., "today, {date_str}" or "ahead of [event]")
-
-GOOD EXAMPLE (one flowing paragraph):
-Unlock $200 in bonus bets by signing up with the bet365 bonus code TOPACTION ahead of Monday Night Football tonight. Register with the bet365 bonus code TOPACTION to place a $5 bet and receive $200 in bonus bets, win or lose. This promo is available to new users in AZ, CO, IA, IL, IN, KS, KY, LA, MD, NC, NJ, OH, PA, TN, VA. Claim this bet365 promo to bet the Chiefs vs. Jaguars on Monday Night Football at 8:15 p.m. ET on ESPN.
-
+{"- Emphasize Missouri launch timeline" if is_mo_launch else "- Integrate the date naturally (e.g., 'today, " + date_str + "' or 'ahead of [event]')"}
 
 RULES:
 - """ + "\n- ".join(rules)

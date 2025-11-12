@@ -79,6 +79,8 @@ def init_state():
     ss.setdefault("box_mode", "outline")
     ss.setdefault("article_box", "")
     ss.setdefault("tokens_cached", [])
+    ss.setdefault("use_sports", False)  # Default to unchecked
+    ss.setdefault("mo_launch", False)
 init_state()
 ss = st.session_state
 
@@ -129,9 +131,62 @@ def tokens_to_outline_text(tokens: list[dict]) -> str:
             out.append(f"[{lvl.upper()}: {t['title']}]")
     return "\n".join(out)
 
+def validate_article_facts(article_html: str, offer_row: dict, keyword: str) -> list[str]:
+    """Return list of warnings/errors found."""
+    errors = []
+    
+    # Check expiration date
+    expiry_pattern = r"expire[sd]? in (\d+) days?"
+    matches = re.findall(expiry_pattern, article_html, re.IGNORECASE)
+    expected_days = offer_row.get("bonus_expiration_days", 7)
+    for match in matches:
+        if int(match) != expected_days:
+            errors.append(f"❌ Wrong expiration: says {match} days but should be {expected_days} days")
+    
+    # Check bonus code matches
+    correct_code = offer_row.get("bonus_code", "").strip()
+    if correct_code and correct_code.lower() not in article_html.lower():
+        errors.append(f"❌ Missing bonus code: {correct_code} not found in article")
+    
+    # Check keyword density (6-9 times)
+    keyword_count = article_html.lower().count(keyword.lower())
+    if keyword_count < 6:
+        errors.append(f"⚠️ Low keyword density: '{keyword}' appears {keyword_count} times (target: 6-9)")
+    elif keyword_count > 9:
+        errors.append(f"⚠️ High keyword density: '{keyword}' appears {keyword_count} times (target: 6-9)")
+    
+    # Check for repetitive phrases (3+ same phrases)
+    sentences = re.split(r'[.!?]+', article_html)
+    sentence_starts = [s.strip()[:30].lower() for s in sentences if len(s.strip()) > 30]
+    from collections import Counter
+    duplicates = [(phrase, count) for phrase, count in Counter(sentence_starts).items() if count >= 3]
+    if duplicates:
+        errors.append(f"⚠️ Repetitive content: {len(duplicates)} phrases repeated 3+ times")
+    
+    return errors
+
+def validate_keyword_in_outline(tokens: list[dict], keyword: str) -> bool:
+    """Check if keyword appears in enough H2 headers (at least 3)."""
+    if not keyword:
+        return True
+    
+    h2_titles = [t["title"].lower() for t in tokens if t["level"] == "h2"]
+    if not h2_titles:
+        return True
+    
+    keyword_lower = keyword.lower()
+    
+    # Check first H2 has keyword
+    if keyword_lower not in h2_titles[0]:
+        return False
+    
+    # Check at least 3 H2s total have keyword
+    count = sum(1 for title in h2_titles if keyword_lower in title)
+    return count >= 3
+
 def ai_outline_tokens_rag(*, keyword: str, exact_title: str | None = None, brand: str | None = None, 
                           offer_text: str | None = None, page_type_hint: str | None = None, 
-                          comp_urls_txt: str | None = None) -> list[dict]:
+                          comp_urls_txt: str | None = None, is_mo_launch: bool = False) -> list[dict]:
     try:
         hits = query_articles(keyword, k=6, snippet_chars=800)
     except Exception:
@@ -142,7 +197,54 @@ def ai_outline_tokens_rag(*, keyword: str, exact_title: str | None = None, brand
     working_title = (exact_title or "").strip()
     sys = "You are an SEO content planner for sports betting promo articles. Your job is to propose a CONCISE outline, not prose."
 
-    user = f"""
+    # Different outline structure for MO launch
+    if is_mo_launch:
+        user = f"""
+KEYWORD / FOCUS:
+{keyword}
+
+WORKING TITLE (use as H1):
+{working_title or "[generate from keyword]"}
+
+PAGE TYPE: Missouri Launch Article
+BRAND + OFFER: {(brand or "").strip()} — {(offer_text or "").strip()}
+COMPETITOR CONTEXT: {comp_urls_txt or "[none]"}
+OUR HOUSE STYLE: {rag_ctx or "[none]"}
+
+OUTPUT FORMAT (STRICT):
+- One item per line.
+- Use bracketed tokens:
+  [INTRO]
+  [SHORTCODE]
+  [H2: ...]
+  [H3: ...]
+
+CRITICAL - MISSOURI LAUNCH STRUCTURE (4-5 H2s max):
+[INTRO] (mention registration Nov 17, full launch Dec 1)
+[SHORTCODE]
+[H2: What to Know About Missouri Sports Betting Launch]
+[SHORTCODE]
+[H2: How to Claim the {keyword}]
+[SHORTCODE]
+[H2: Key Details & Eligibility]
+[H2: How to Sign Up for {keyword}]
+
+
+KEYWORD INTEGRATION REQUIREMENTS:
+- The exact phrase "{keyword}" MUST appear in the first H2 heading
+- The keyword MUST appear in at least 2 additional H2 headings (3 total minimum)
+- Use the keyword naturally in headings like:
+  ✓ "How to Claim the {keyword}"
+  ✓ "Key Details for the {keyword}"
+
+
+FOCUS: This is a LAUNCH ANNOUNCEMENT for Missouri sports betting.
+- Emphasize Missouri launch timeline (registration Nov 17, full launch Dec 1)
+- Explain what Missouri residents can expect
+- Keep it concise: 500-600 words total
+"""
+    else:
+        user = f"""
 KEYWORD / FOCUS:
 {keyword}
 
@@ -175,10 +277,20 @@ CRITICAL LENGTH CONSTRAINTS (STRICTLY ENFORCE):
 - Must include ONE "How to Sign Up" section at the end
 - Focus on ESSENTIAL info only
 
+
+KEYWORD INTEGRATION REQUIREMENTS:
+- The exact phrase "{keyword}" MUST appear in the first H2 heading
+- The keyword MUST appear in at least 2 additional H2 headings (3 total minimum)
+- Use the keyword naturally in headings like:
+  ✓ "How to Claim the {keyword}"
+  ✓ "Key Details for the {keyword}"
+
+
+
 REQUIRED STRUCTURE (4-5 H2s max):
 [INTRO]
 [SHORTCODE]
-[H2: Overview] (why this offer matters - 2-3 sentences)
+[H2: {keyword} Overview] (why this offer matters - 2-3 sentences)
 [SHORTCODE]
 [H2: How to Claim the {keyword}] (worked example with dollar amounts)
 [SHORTCODE]
@@ -216,17 +328,30 @@ That's it. STOP after 4-5 H2s. This is a NEWS ANNOUNCEMENT, not a comprehensive 
         tokens = filtered
 
     if not tokens:
-        tokens = [
-            {"level": "intro", "title": ""},
-            {"level": "shortcode", "title": ""},
-            {"level": "h2", "title": "Overview"},
-            {"level": "shortcode", "title": ""},
-            {"level": "h2", "title": f"How to Claim the {keyword or 'Offer'}"},
-            {"level": "shortcode", "title": ""},
-            {"level": "h2", "title": "Key Details & Eligibility"},
-            {"level": "shortcode", "title": ""},
-            {"level": "h2", "title": f"How to Sign Up for {keyword or 'This Promo'}"}, 
-        ]
+        if is_mo_launch:
+            tokens = [
+                {"level": "intro", "title": ""},
+                {"level": "shortcode", "title": ""},
+                {"level": "h2", "title": "What to Know About Missouri Sports Betting Launch"},
+                {"level": "shortcode", "title": ""},
+                {"level": "h2", "title": f"How to Claim the {keyword or 'Offer'}"},
+                {"level": "shortcode", "title": ""},
+                {"level": "h2", "title": "Key Details & Eligibility"},
+                {"level": "shortcode", "title": ""},
+                {"level": "h2", "title": f"How to Sign Up for {keyword or 'This Promo'}"}, 
+            ]
+        else:
+            tokens = [
+                {"level": "intro", "title": ""},
+                {"level": "shortcode", "title": ""},
+                {"level": "h2", "title": f"{keyword} Overview"},
+                {"level": "shortcode", "title": ""},
+                {"level": "h2", "title": f"How to Claim the {keyword or 'Offer'}"},
+                {"level": "shortcode", "title": ""},
+                {"level": "h2", "title": "Key Details & Eligibility"},
+                {"level": "shortcode", "title": ""},
+                {"level": "h2", "title": f"How to Sign Up for {keyword or 'This Promo'}"}, 
+            ]
     return tokens
 
 def _build_terms_section(offer_row: dict | None, state: str) -> str:
@@ -249,12 +374,16 @@ def _build_terms_section(offer_row: dict | None, state: str) -> str:
     
     return "\n\n".join(parts)
 
-def _build_default_title(offer_row: dict, sport: str = "", event_context: str = "", keyword: str = "") -> str:
+def _build_default_title(offer_row: dict, sport: str = "", event_context: str = "", keyword: str = "", is_mo_launch: bool = False) -> str:
     """Build default title using keyword if provided."""
     if keyword:
         return keyword.title()
     
     brand = (offer_row.get("brand") or "").strip()
+    
+    if is_mo_launch:
+        return f"{brand} Missouri Promo Code: Score Bonus for MO Sports Betting Launch" if brand else "Missouri Sports Betting Launch Promo"
+    
     title = f"{brand} Promo Code" if brand else "Sportsbook Promo"
     
     if event_context:
@@ -269,7 +398,7 @@ def _build_default_title(offer_row: dict, sport: str = "", event_context: str = 
 
 def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict | None, state: str,
                                   event_context: str = "", sport: str = "", switchboard_url: str = "",
-                                  target_date: datetime = None, keyword: str = "") -> str:
+                                  target_date: datetime = None, keyword: str = "", is_mo_launch: bool = False) -> str:
     parts = []
     previous_content = ""
     brand = (offer_row.get("brand") or "").strip() if offer_row else ""
@@ -309,23 +438,28 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
     
     link_pool = list(all_internal_links)
     used_link_urls = set()
+    keyword_count = 0  # Track keyword usage across sections
+    target_keyword_total = 9  # Target 6-9, aim for 9
 
-    # Generate intro
+    # Generate intro with MO launch context if applicable
     if any(t["level"] == "intro" for t in tokens):
         if target_date:
             date_str = f"{target_date.strftime('%A')}, {target_date.strftime('%B')} {target_date.day}, {target_date.year}"
         else:
             date_str = today_long("US/Eastern")
         
-        # Pass keyword to intro
+        # Pass MO launch flag to intro prompt
         ps_intro = make_intro_prompt(
             brand=(offer_row.get("brand") if offer_row else "") or "",
             offer_text=(offer_row.get("offer_text") if offer_row else "") or "",
             bonus_code=(offer_row.get("bonus_code") if offer_row else "") or "",
             date_str=date_str,
             available_states=available_states,
-            event_context=event_context,
-            keyword=keyword,  # Pass the keyword
+            event_context=event_context,  # Can be present even with MO launch
+            keyword=keyword,
+            is_mo_launch=is_mo_launch,
+            bonus_expiration_days=offer_row.get("bonus_expiration_days", 7) if offer_row else 7,  # NEW
+            bonus_amount=offer_row.get("bonus_amount", "") if offer_row else "",  # NEW
         )
         intro_md = generate_markdown(ps_intro.system, ps_intro.user, temperature=ps_intro.temperature).strip()
         if intro_md.startswith("#"):
@@ -356,13 +490,26 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
         
         section_count += 1
         
-        # Section objectives - improved to avoid repetition
-        if "overview" in heading_lower:
+        # Section objectives - modified for MO launch
+        if is_mo_launch and "missouri" in heading_lower and "launch" in heading_lower:
             objective = (
-                "Write about WHY this offer appeals to bettors. "
-                "Focus on value proposition and timing. "
-                "Use active voice throughout. 3-4 sentences maximum."
+                "Write about the Missouri sports betting launch timeline and what residents need to know. "
+                "CRITICAL DATES: Registration opens November 17, 2024. Full sports betting launches December 1, 2024. "
+                "Explain what users can do now vs. after launch. Use active voice. 3-4 sentences maximum."
             )
+        elif "overview" in heading_lower:
+            if is_mo_launch:
+                objective = (
+                    "Explain why this Missouri launch offer is valuable to new bettors. "
+                    "Focus on timing advantage of signing up during registration period. "
+                    "Use active voice. 3-4 sentences maximum."
+                )
+            else:
+                objective = (
+                    "Write about WHY this offer appeals to bettors. "
+                    "Focus on value proposition and timing. "
+                    "Use active voice throughout. 3-4 sentences maximum."
+                )
         elif "sign up" in heading_lower and "how to" in heading_lower:
             objective = (
                 f"CRITICAL: Output ONLY a numbered list. NO PARAGRAPHS.\n"
@@ -371,12 +518,30 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
                 f"Write in active voice. Be specific and actionable."
             )
         elif "claim" in heading_lower or ("how to" in heading_lower and "sign" not in heading_lower):
-            objective = (
-                f"Provide a WORKED EXAMPLE using {event_context if event_context else 'a typical bet'}. "
-                f"Use first-person active voice: 'If I place a $50 bet on [specific]...' "
-                f"Show win and loss scenarios with exact calculations. "
-                f"Focus on the mechanics, not restating the offer."
-            )
+            if is_mo_launch and not event_context:
+                # MO launch without specific game
+                objective = (
+                    f"Explain how to claim this offer during Missouri's registration period. "
+                    f"Focus on the registration timeline (Nov 17) and full launch (Dec 1). "
+                    f"NO game examples - this is about the launch process. "
+                    f"Use active voice. 3-4 sentences."
+                )
+            elif is_mo_launch and event_context:
+                # MO launch WITH specific game
+                objective = (
+                    f"Provide a WORKED EXAMPLE using {event_context} to show Missouri bettors how this works. "
+                    f"Also mention this can be used starting from registration (Nov 17) or full launch (Dec 1). "
+                    f"Use first-person active voice: 'If I place a $50 bet on [specific]...' "
+                    f"Show win and loss scenarios with exact calculations."
+                )
+            else:
+                # Regular game-day promo
+                objective = (
+                    f"Provide a WORKED EXAMPLE using {event_context if event_context else 'a typical bet'}. "
+                    f"Use first-person active voice: 'If I place a $50 bet on [specific]...' "
+                    f"Show win and loss scenarios with exact calculations. "
+                    f"Focus on the mechanics, not restating the offer."
+                )
         elif "details" in heading_lower or "key" in heading_lower:
             objective = (
                 f"Cover essential requirements in active voice: "
@@ -393,12 +558,16 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
             objective=objective,
             audience="US sports bettors ages 21-65",
             constraints={},
-            facts_and_points=[f"Featured: {event_context}"] if event_context and "claim" in heading_lower else [],
+            facts_and_points=(
+                [f"MO Launch: Registration Nov 17, Full Launch Dec 1"] if is_mo_launch else []
+            ) + ([f"Featured: {event_context}"] if event_context and "claim" in heading_lower else []),
             retrieved_snippets=[],
         )
         
         # RAG retrieval
         query_parts = [heading, keyword or "sports betting", brand]
+        if is_mo_launch:
+            query_parts.append("Missouri launch")
         query = " ".join(p for p in query_parts if p.strip())
         
         try:
@@ -419,11 +588,33 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
                 section_links.append(next_link)
                 used_link_urls.add(next_link.url)
         
-        ps = make_promptsect(brief, offer_row or {}, section_links, disclaimer_for_state(state),
-                            previous_content=previous_content[-1500:], available_states=available_states,
-                            keyword=keyword)
-        body_md = generate_markdown(ps.system, ps.user, temperature=ps.temperature).strip()
+        ps = make_promptsect(brief, 
+                             offer_row or {},
+                            section_links, 
+                            disclaimer_for_state(state),
+                            previous_content=previous_content[-3500:],
+                            available_states=available_states,
+                            keyword=keyword,
+                            current_keyword_count=keyword_count,  # NEW
+                            target_keyword_total=target_keyword_total)  # NEW
         
+        # Determine temperature by section type
+        heading_lower = heading.lower()
+
+        # Check if this is a numbered list section from the objective
+        is_numbered_section = "NUMBERED STEP-BY-STEP" in brief.objective or "numbered list" in brief.objective.lower()
+
+        if "terms" in heading_lower or "key details" in heading_lower:
+            section_temp = 0.3  # Very precise for terms/details
+        elif "claim" in heading_lower or "sign up" in heading_lower or is_numbered_section:
+            section_temp = 0.6  # Factual but some flexibility
+        elif "overview" in heading_lower:
+            section_temp = 0.7  # Balanced
+        else:
+            section_temp = 0.6  # Default middle ground
+
+        body_md = generate_markdown(ps.system, ps.user, temperature=section_temp).strip()
+
         level = t["level"].lower()
         prefix = "##" if level == "h2" else "###" if level == "h3" else "####"
         section_text = f"{prefix} {heading}\n\n{body_md}"
@@ -444,6 +635,14 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
     terms_section = _build_terms_section(offer_row, state)
     if terms_section:
         full_article = f"{full_article}\n\n{terms_section}"
+
+    # Validate article facts
+    validation_errors = validate_article_facts(full_article, offer_row, keyword)
+    if validation_errors and os.getenv("DEBUG"):
+        st.warning("⚠️ Validation Issues Found:")
+        for error in validation_errors:
+            st.write(error)
+
     
     # Convert to HTML
     st.info("🔄 Converting markdown to HTML...")
@@ -509,57 +708,90 @@ with st.container():
     
     ss["switchboard_url"] = link or "https://switchboard.actionnetwork.com/offers?affiliateId=174"
     
-    # Row 2: Title + Keyword + Sport + Date
-    col_title, col_keyword, col_sport, col_date = st.columns([3, 2, 1, 1.5])
-    
-    sport_options = {"NFL": "nfl", "NBA": "nba", "MLB": "mlb", "NHL": "nhl"}
-    
-    with col_sport:
-        sport_label = st.selectbox("Sport", list(sport_options.keys()))
-        sport_selected = sport_options[sport_label]
-    
-    with col_date:
-        target_date = st.date_input("Date", value=date.today(), 
-                                     min_value=date.today(), max_value=date.today() + timedelta(7))
-    
-    # Fetch games
-    target_datetime = datetime.combine(target_date, datetime.min.time()).replace(tzinfo=ZoneInfo("America/New_York"))
-    event_context = ""
-    selected_game = None
-    
-    try:
-        games = get_games_for_date(sport_selected, target_datetime)
-        if games:
-            prime = filter_prime_time_games(games)
-            default_game = prime[0] if prime else games[0]
-            default_idx = games.index(default_game) if default_game in games else 0
-            
-            # Game selector
-            game_options = [format_game_for_dropdown(g) for g in games]
-            selected_idx = st.selectbox(
-                f"Game ({len(games)} available)",
-                options=list(range(len(games))),
-                format_func=lambda i: game_options[i],
-                index=default_idx
-            )
-            selected_game = games[selected_idx]
-            event_context = format_event_for_prompt(selected_game, target_datetime)
-            
-            is_prime = selected_game in prime if prime else False
-            st.caption(f"📅 {event_context} {'⭐' if is_prime else ''}")
-        else:
-            st.info(f"ℹ️ No {sport_label} games on {target_date.strftime('%A, %b %d')}")
-    except Exception as e:
-        st.warning(f"⚠️ Could not fetch games: {e}")
+    # Row 2: Title + Keyword + Toggles
+    col_title, col_keyword, col_toggles = st.columns([3, 2, 2])
     
     with col_keyword:
         ss["keyword"] = st.text_input("Keyword", value=ss.get("keyword", ""), 
                                       placeholder="e.g., BetMGM promo code",
                                       help="This will be used throughout the article instead of full offer names")
     
+    with col_toggles:
+        st.write("**Article Type**")
+        col_mo, col_sports = st.columns(2)
+        with col_mo:
+            ss["mo_launch"] = st.checkbox("MO Launch", value=ss.get("mo_launch", False),
+                                          help="Missouri launch (Nov 17 registration, Dec 1 launch)")
+        with col_sports:
+            ss["use_sports"] = st.checkbox("Specific Game", value=ss.get("use_sports", False),
+                                           help="Include specific game/event context")
+    
+    # Sport/Game selection (only show if enabled)
+    event_context = ""
+    selected_game = None
+    sport_selected = None
+    target_datetime = None
+    
+    if ss["use_sports"]:
+        st.subheader("🏈 Game Selection")
+        col_sport, col_date = st.columns([1, 1])
+        
+        sport_options = {"NFL": "nfl", "NBA": "nba", "MLB": "mlb", "NHL": "nhl"}
+        
+        with col_sport:
+            sport_label = st.selectbox("Sport", list(sport_options.keys()))
+            sport_selected = sport_options[sport_label]
+        
+        with col_date:
+            # Extended to 30 days
+            target_date = st.date_input("Date", value=date.today(), 
+                                         min_value=date.today(), 
+                                         max_value=date.today() + timedelta(days=30),
+                                         help="Select any date within the next 30 days")
+        
+        # Fetch games
+        target_datetime = datetime.combine(target_date, datetime.min.time()).replace(tzinfo=ZoneInfo("America/New_York"))
+        
+        try:
+            games = get_games_for_date(sport_selected, target_datetime)
+            if games:
+                prime = filter_prime_time_games(games)
+                default_game = prime[0] if prime else games[0]
+                default_idx = games.index(default_game) if default_game in games else 0
+                
+                # Game selector
+                game_options = [format_game_for_dropdown(g) for g in games]
+                selected_idx = st.selectbox(
+                    f"Game ({len(games)} available)",
+                    options=list(range(len(games))),
+                    format_func=lambda i: game_options[i],
+                    index=default_idx
+                )
+                selected_game = games[selected_idx]
+                event_context = format_event_for_prompt(selected_game, target_datetime)
+                
+                is_prime = selected_game in prime if prime else False
+                st.caption(f"📅 {event_context} {'⭐' if is_prime else ''}")
+            else:
+                st.info(f"ℹ️ No {sport_label} games on {target_date.strftime('%A, %b %d')}")
+        except Exception as e:
+            st.warning(f"⚠️ Could not fetch games: {e}")
+    
+    # Show content type indicator
+    if ss["mo_launch"] and ss["use_sports"]:
+        st.info("📰 Creating **Missouri Launch** article with **specific game** context")
+    elif ss["mo_launch"]:
+        st.info("📰 Creating **Missouri Launch** article (evergreen, no specific game)")
+    elif ss["use_sports"]:
+        st.info("📰 Creating **game-day promo** article")
+    else:
+        st.info("📰 Creating **evergreen promo** article (no game or launch context)")
+    
     # Generate title
-    default_title = _build_default_title(offer_row, sport=sport_selected, event_context=event_context, 
-                                         keyword=ss.get("keyword", ""))
+    default_title = _build_default_title(offer_row, sport=sport_selected or "", 
+                                         event_context=event_context, 
+                                         keyword=ss.get("keyword", ""),
+                                         is_mo_launch=ss["mo_launch"])
     
     with col_title:
         ss["user_title"] = st.text_input("Title", value=ss.get("user_title") or default_title)
@@ -584,6 +816,7 @@ if st.button("Generate Outline", type="primary"):
             offer_text=offer_row.get("offer_text", ""),
             page_type_hint=(offer_row.get("page_type") or "").strip(),
             comp_urls_txt=comp_text,
+            is_mo_launch=ss["mo_launch"],
         )
         ss["tokens_cached"] = tokens
         ss["box_mode"] = "outline"
@@ -695,10 +928,11 @@ with col_gen:
                     offer_row=offer_row,
                     state="ALL", 
                     event_context=event_context, 
-                    sport=sport_selected,
+                    sport=sport_selected or "",
                     switchboard_url=ss.get("switchboard_url", ""), 
                     target_date=target_datetime,
-                    keyword=ss.get("keyword", ""),  # Pass keyword
+                    keyword=ss.get("keyword", ""),
+                    is_mo_launch=ss["mo_launch"],
                 )
                 ss["box_mode"] = "draft"
                 ss["pending_article_box"] = full_md

@@ -153,8 +153,7 @@ def _load_from_dynamic_sheet() -> pd.DataFrame:
                     "context": row_values[7] if len(row_values) > 7 else "",
                     "shortcode_type": row_values[8] if len(row_values) > 8 else "",
                     "shortcode": row_values[9] if len(row_values) > 9 else "",
-                    "switchboard_link": row_values[10] if len(row_values) > 10 else "",  # Column K
-
+                    "switchboard_link": row_values[10] if len(row_values) > 10 else "",
                 })
             
             if progress_bar and (idx + 1) % 5 == 0:
@@ -271,6 +270,97 @@ def _parse_states(states: Any) -> List[str]:
             seen.add(p); out.append(p)
     return out
 
+def _extract_bonus_expiration_days(terms: str) -> int:
+    """
+    Extract bonus expiration days from terms text.
+    Looks for patterns like "expire in 7 days", "valid for 14 days", etc.
+    Returns 7 as default if not found.
+    """
+    if not terms:
+        return 7
+    
+    # Patterns to match
+    patterns = [
+        r"expire[sd]?\s+(?:in|within)\s+(\d+)\s+days?",
+        r"valid\s+for\s+(\d+)\s+days?",
+        r"must\s+be\s+used\s+within\s+(\d+)\s+days?",
+        r"(\d+)[-\s]day\s+expiration",
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, terms.lower())
+        if match:
+            try:
+                return int(match.group(1))
+            except (ValueError, IndexError):
+                continue
+    
+    # Default to 7 days if not found
+    return 7
+
+def _extract_minimum_odds(terms: str) -> str:
+    """
+    Extract minimum odds requirement from terms.
+    Looks for patterns like "minimum odds -200", "odds of -300 or longer", etc.
+    """
+    if not terms:
+        return ""
+    
+    patterns = [
+        r"minimum\s+odds\s+(?:of\s+)?([+-]?\d+)",
+        r"odds\s+of\s+([+-]?\d+)\s+or\s+(?:longer|better|higher)",
+        r"([+-]?\d+)\s+odds\s+(?:or\s+(?:longer|better))?",
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, terms.lower())
+        if match:
+            return match.group(1)
+    
+    return ""
+
+def _extract_wagering_requirement(terms: str) -> str:
+    """
+    Extract wagering requirement from terms.
+    Looks for patterns like "1x playthrough", "rollover requirement", etc.
+    """
+    if not terms:
+        return ""
+    
+    patterns = [
+        r"(\d+)x\s+(?:playthrough|rollover|wagering)",
+        r"(?:playthrough|rollover|wagering)\s+(?:requirement\s+of\s+)?(\d+)x",
+        r"must\s+be\s+wagered\s+(\d+)\s+time[s]?",
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, terms.lower())
+        if match:
+            return f"{match.group(1)}x"
+    
+    return ""
+
+def _extract_bonus_amount(offer_text: str) -> str:
+    """
+    Extract bonus amount from offer text.
+    Looks for patterns like "$200", "$1,000", "up to $500", etc.
+    """
+    if not offer_text:
+        return ""
+    
+    patterns = [
+        r"\$(\d+(?:,\d+)?(?:\.\d+)?)",
+        r"(\d+(?:,\d+)?)\s+(?:dollars?|bucks)",
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, offer_text)
+        if match:
+            amount = match.group(1).replace(",", "")
+            return f"${amount}"
+    
+    return ""
+
 def _normalize_offers_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -286,6 +376,12 @@ def _normalize_offers_df(df: pd.DataFrame) -> pd.DataFrame:
     df["states_list"] = df["states"].map(_parse_states)
     df["brand_clean"] = df["brand"].astype(str).str.strip()
     df["page_type_clean"] = df["page_type"].astype(str).str.strip()
+
+    # Extract critical offer details from terms
+    df["bonus_expiration_days"] = df["terms"].map(_extract_bonus_expiration_days)
+    df["minimum_odds"] = df["terms"].map(_extract_minimum_odds)
+    df["wagering_requirement"] = df["terms"].map(_extract_wagering_requirement)
+    df["bonus_amount"] = df["offer_text"].map(_extract_bonus_amount)
 
     df["offer_id"] = (
         df["brand_clean"].astype(str)
@@ -400,6 +496,10 @@ def get_offer_by_id(df: pd.DataFrame, offer_id: str) -> Dict[str, Any]:
     rec.setdefault("switchboard_link", rec.get("url", ""))
     rec.setdefault("states_list", _parse_states(rec.get("states", "")))
     rec.setdefault("terms", "")
+    rec.setdefault("bonus_expiration_days", _extract_bonus_expiration_days(rec.get("terms", "")))
+    rec.setdefault("minimum_odds", _extract_minimum_odds(rec.get("terms", "")))
+    rec.setdefault("wagering_requirement", _extract_wagering_requirement(rec.get("terms", "")))
+    rec.setdefault("bonus_amount", _extract_bonus_amount(rec.get("offer_text", "")))
     return rec
 
 # Keep the old alias alive
@@ -447,5 +547,4 @@ def render_offer_block(offer_row: Dict[str, Any], placement: str = "inline") -> 
         block += f"\n<details><summary>Terms apply</summary><p>{terms}</p></details>\n"
     block += "\n21+. Gambling problem? Call 1-800-GAMBLER. Please bet responsibly.\n"
     block = re.sub(r"\n{3,}", "\n\n", block).strip() + "\n"
-    return block
-
+    return block    
