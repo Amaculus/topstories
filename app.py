@@ -70,7 +70,35 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📝 Content Generator")
+# Add after st.title("📝 Content Generator")
+with st.expander("🔧 Admin Tools", expanded=False):
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🔄 Rebuild Evergreen Index", use_container_width=True):
+            with st.spinner("Rebuilding evergreen index..."):
+                try:
+                    from scripts.rebuild_evergreen_index import rebuild_index
+                    rebuild_index()
+                    st.success("✅ Evergreen index rebuilt successfully!")
+                    st.balloons()
+                except Exception as e:
+                    st.error(f"❌ Failed to rebuild index: {e}")
+                    st.exception(e)
+    
+    with col2:
+        # Check if index exists
+        import os
+        index_exists = (
+            os.path.exists("storage/evergreen_index.json") and 
+            os.path.exists("storage/evergreen_vectors.npy")
+        )
+        if index_exists:
+            st.success("✅ Index exists")
+        else:
+            st.warning("⚠️ Index missing - rebuild needed")
 
+st.divider()
 # ---------------- Session state ----------------
 def init_state():
     ss = st.session_state
@@ -156,6 +184,8 @@ def parse_outline_tokens(text: str) -> list[dict]:
 def tokens_to_outline_text(tokens: list[dict]) -> str:
     out = []
     for t in tokens:
+        if t is None:  # Safety check
+            continue
         lvl = t["level"]
         if lvl == "intro":
             out.append("[INTRO]")
@@ -381,17 +411,30 @@ That's it. STOP after 4-5 H2s. This is a NEWS ANNOUNCEMENT, not a comprehensive 
         else:
             tokens = [
                 {"level": "intro", "title": ""},
-                {"level": "shortcode_main", "title": ""},  # CHANGED
+                {"level": "shortcode_main", "title": ""},
                 {"level": "h2", "title": f"{keyword} Overview"},
-                {"level": "shortcode_main", "title": ""},  # CHANGED
-                {"level": "shortcode_1", "title": ""} if num_offers > 1 else None,  # CONDITIONAL
-                {"level": "shortcode_2", "title": ""} if num_offers > 2 else None,  # CONDITIONAL
+                {"level": "shortcode_main", "title": ""},
+            ]
+            
+            # Add conditional shortcodes without creating None values
+            if num_offers > 1:
+                tokens.append({"level": "shortcode_1", "title": ""})
+            if num_offers > 2:
+                tokens.append({"level": "shortcode_2", "title": ""})
+            
+            # Continue with rest of outline
+            tokens.extend([
                 {"level": "h2", "title": f"How to Claim the {keyword or 'Offer'}"},
-                {"level": "shortcode_2", "title": ""} if num_offers > 2 else None,  # CONDITIONAL
+            ])
+            
+            if num_offers > 2:
+                tokens.append({"level": "shortcode_2", "title": ""})
+            
+            tokens.extend([
                 {"level": "h2", "title": "Key Details & Eligibility"},
                 {"level": "shortcode_main", "title": ""},
                 {"level": "h2", "title": f"How to Sign Up for {keyword or 'This Promo'}"}, 
-            ]
+            ])
     return tokens
 
 def _build_terms_section(offer_row: dict | None, state: str) -> str:
