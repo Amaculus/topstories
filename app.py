@@ -26,6 +26,7 @@ if not os.getenv("OFFERS_SHEET_TAB") and not os.getenv("OFFERS_WORKSHEET"):
 # -----------------------------------------------------------------------------
 from src.rag_store import query_articles
 from src.offers_layer import get_offers_df_cached, get_offer_by_id, render_offer_block
+from src.bam_offers import get_bam_offers, BAMOffersFetcher
 from src.internal_links import suggest_links_for_brief
 from src.validators import disclaimer_for_state
 from src.prompt_factory import make_promptsect, make_intro_prompt
@@ -777,32 +778,70 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
 # =============================================================================
 
 with st.container():
+    # Source selection toggle
+    col_source, col_spacer = st.columns([3, 9])
+    with col_source:
+        offers_source = st.radio(
+            "Offers Source",
+            options=["BAM API", "Google Sheets"],
+            index=0,
+            horizontal=True,
+            help="BAM API is faster and more reliable"
+        )
+
     # Row 1: Offer + Refresh
     col1, col_refresh = st.columns([11, 1])
-    
+
     with col1:
-        offers_df = get_offers_df_cached()
-        if offers_df.empty:
-            st.error("No offers loaded. Check config.")
-            st.stop()
-        
-        # Filter out casino offers
-        opt_pairs = []
-        for _, r in offers_df.iterrows():
-            affiliate_offer = str(r.get("affiliate_offer", "")).strip().lower()
-            offer_text = str(r.get("offer_text", "")).strip().lower()
-            if any(kw in text for text in [affiliate_offer, offer_text] for kw in ["casino", "slots"]):
-                continue
-            
-            brand_txt = str(r.get("brand", "")).strip()
-            code_txt = str(r.get("bonus_code", "")).strip()
-            main = str(r.get("affiliate_offer", "")).strip() or str(r.get("offer_text", "")).strip()
-            label = f"{main} [{brand_txt}]" + (f" ({code_txt})" if code_txt else "")
-            opt_pairs.append((str(r["offer_id"]), label))
-        
-        sel_idx = st.selectbox("Offer", options=list(range(len(opt_pairs))), 
-                               format_func=lambda i: opt_pairs[i][1], key="offer_idx")
-        offer_row = get_offer_by_id(offers_df, opt_pairs[sel_idx][0])
+        # Load offers based on selected source
+        if offers_source == "BAM API":
+            # Use BAM API
+            bam_offers = get_bam_offers()
+            if not bam_offers:
+                st.error("No offers loaded from BAM API.")
+                st.stop()
+
+            # Filter out casino offers
+            opt_pairs = []
+            for offer in bam_offers:
+                offer_text = str(offer.get("offer_text", "")).strip().lower()
+                if any(kw in offer_text for kw in ["casino", "slots", "poker"]):
+                    continue
+
+                brand_txt = str(offer.get("brand", "")).strip()
+                code_txt = str(offer.get("bonus_code", "")).strip()
+                main = str(offer.get("offer_text", "")).strip()
+                label = f"{main} [{brand_txt}]" + (f" ({code_txt})" if code_txt else "")
+                opt_pairs.append((offer["bam_id"], label, offer))
+
+            sel_idx = st.selectbox("Offer", options=list(range(len(opt_pairs))),
+                                   format_func=lambda i: opt_pairs[i][1], key="offer_idx")
+            offer_row = opt_pairs[sel_idx][2]  # Get the offer dict directly
+
+        else:
+            # Use Google Sheets (legacy)
+            offers_df = get_offers_df_cached()
+            if offers_df.empty:
+                st.error("No offers loaded. Check config.")
+                st.stop()
+
+            # Filter out casino offers
+            opt_pairs = []
+            for _, r in offers_df.iterrows():
+                affiliate_offer = str(r.get("affiliate_offer", "")).strip().lower()
+                offer_text = str(r.get("offer_text", "")).strip().lower()
+                if any(kw in text for text in [affiliate_offer, offer_text] for kw in ["casino", "slots"]):
+                    continue
+
+                brand_txt = str(r.get("brand", "")).strip()
+                code_txt = str(r.get("bonus_code", "")).strip()
+                main = str(r.get("affiliate_offer", "")).strip() or str(r.get("offer_text", "")).strip()
+                label = f"{main} [{brand_txt}]" + (f" ({code_txt})" if code_txt else "")
+                opt_pairs.append((str(r["offer_id"]), label))
+
+            sel_idx = st.selectbox("Offer", options=list(range(len(opt_pairs))),
+                                   format_func=lambda i: opt_pairs[i][1], key="offer_idx")
+            offer_row = get_offer_by_id(offers_df, opt_pairs[sel_idx][0])
 
                 # NEW: Alternative offers section
         alt_offers = get_alternative_offers(offers_df, offer_row)
@@ -840,20 +879,33 @@ with st.container():
     
     with col_refresh:
         st.write("")
-        if st.button("🔄", help="Refresh"):
+        if st.button("🔄", help="Refresh offers cache"):
+            # Clear Google Sheets cache
             try:
                 get_offers_df_cached.clear()
             except:
                 pass
             if os.path.exists("data/offers_cache.pkl"):
                 os.remove("data/offers_cache.pkl")
+            # Clear BAM API cache
+            if os.path.exists("data/bam_offers_cache.pkl"):
+                os.remove("data/bam_offers_cache.pkl")
             st.rerun()
     
     # Compact offer info
     states = offer_row.get("states_list", []) or []
     code = (offer_row.get("bonus_code") or "").strip()
     link = (offer_row.get("switchboard_link") or "").strip()
-    
+
+    # For BAM API, parse states from terms if available
+    if not states and offers_source == "BAM API":
+        terms_text = offer_row.get("terms", "")
+        # Try to extract state abbreviations from terms
+        import re
+        state_pattern = r'\b([A-Z]{2})\b'
+        found_states = re.findall(state_pattern, terms_text)
+        states = found_states if found_states else ["Nationwide"]
+
     st.caption(f"**States:** {', '.join(states[:6]) if states and states != ['ALL'] else 'Nationwide'}  |  "
                f"**Code:** `{code if code else '—'}`  |  "
                f"**Link:** {'✅' if link else '⚠️'}")
