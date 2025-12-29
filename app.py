@@ -801,22 +801,29 @@ with st.container():
                 st.error("No offers loaded from BAM API.")
                 st.stop()
 
+            # Convert to DataFrame for consistency with Google Sheets path
+            offers_df = pd.DataFrame(bam_offers)
+
+            # Add offer_id field for compatibility (use bam_id)
+            if "offer_id" not in offers_df.columns:
+                offers_df["offer_id"] = offers_df["bam_id"].astype(str)
+
             # Filter out casino offers
             opt_pairs = []
-            for offer in bam_offers:
-                offer_text = str(offer.get("offer_text", "")).strip().lower()
+            for _, r in offers_df.iterrows():
+                offer_text = str(r.get("offer_text", "")).strip().lower()
                 if any(kw in offer_text for kw in ["casino", "slots", "poker"]):
                     continue
 
-                brand_txt = str(offer.get("brand", "")).strip()
-                code_txt = str(offer.get("bonus_code", "")).strip()
-                main = str(offer.get("offer_text", "")).strip()
+                brand_txt = str(r.get("brand", "")).strip()
+                code_txt = str(r.get("bonus_code", "")).strip()
+                main = str(r.get("offer_text", "")).strip()
                 label = f"{main} [{brand_txt}]" + (f" ({code_txt})" if code_txt else "")
-                opt_pairs.append((offer["bam_id"], label, offer))
+                opt_pairs.append((str(r["offer_id"]), label))
 
             sel_idx = st.selectbox("Offer", options=list(range(len(opt_pairs))),
                                    format_func=lambda i: opt_pairs[i][1], key="offer_idx")
-            offer_row = opt_pairs[sel_idx][2]  # Get the offer dict directly
+            offer_row = get_offer_by_id(offers_df, opt_pairs[sel_idx][0])
 
         else:
             # Use Google Sheets (legacy)
