@@ -17,7 +17,7 @@ CACHE_DURATION = timedelta(hours=6)
 BAM_API_URL = "https://b.bet-links.com/v1/affiliate/properties/1/placements/2037/promotions"
 BAM_PARAMS = {
     "user_parent_book_ids": "",
-    "context": "web-sbr-landing-page"
+    "context": "web-article-top-stories"  # Match Google Sheets context
 }
 BAM_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -189,15 +189,30 @@ class BAMOffersFetcher:
         affiliate_name = affiliate.get('name', '').lower()
         affiliate_type = affiliate.get('affiliate_type', 'sportsbook').lower()
 
-        # Get primary internal identifier (prefer 'evergreen' or first in list)
+        # Get primary internal identifier
+        # Prefer specific identifiers over generic ones
+        # Generic identifiers: 'sportsbook', 'bonus-code', 'canada', 'mo'
+        # Specific identifiers: 'evergreen', 'evergreen2', 'fbo', 'bet-get', 'lpb', etc.
         internal_id = 'evergreen'
         if internal_identifiers:
-            if 'evergreen' in internal_identifiers:
-                internal_id = 'evergreen'
-            elif 'evergreen2' in internal_identifiers:
-                internal_id = 'evergreen2'
+            # Define priority order (most specific first)
+            priority_ids = ['fbo', 'bet-get', 'lpb', 'evergreen', 'evergreen2']
+            generic_ids = {'sportsbook', 'bonus-code', 'canada', 'mo'}
+
+            # First, try to find a priority ID
+            for priority_id in priority_ids:
+                if priority_id in internal_identifiers:
+                    internal_id = priority_id
+                    break
             else:
-                internal_id = internal_identifiers[0]
+                # If no priority ID found, use first non-generic ID
+                for id_str in internal_identifiers:
+                    if id_str not in generic_ids:
+                        internal_id = id_str
+                        break
+                else:
+                    # Fallback to first ID if all are generic
+                    internal_id = internal_identifiers[0]
 
         # Build BAM shortcode
         # Format: [bam-inline-promotion placement-id="2037" property-id="1" ...]
