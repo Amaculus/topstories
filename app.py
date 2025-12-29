@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
 import markdown
 import pandas as pd
-
+from src.odds_fetcher import CharlotteOddsFetcher
 # -----------------------------------------------------------------------------
 # Env & defaults
 # -----------------------------------------------------------------------------
@@ -98,7 +98,7 @@ with st.expander("🔧 Admin Tools", expanded=False):
         else:
             st.warning("⚠️ Index missing - rebuild needed")
 
-st.divider()
+st.divider()    
 # ---------------- Session state ----------------
 def init_state():
     ss = st.session_state
@@ -481,8 +481,8 @@ def _build_default_title(offer_row: dict, sport: str = "", event_context: str = 
 
 def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict | None, state: str,
                                   event_context: str = "", sport: str = "", switchboard_url: str = "",
-                                  target_date: datetime = None, keyword: str = "", is_mo_launch: bool = False,    alt_offers: list[dict] = None  # NEW
-                                    ) -> str:
+                                  target_date: datetime = None, keyword: str = "", is_mo_launch: bool = False,    alt_offers: list[dict] = None,  # NEW
+                                    bet_example: str = "",) -> str:
 
       
     parts = []
@@ -646,6 +646,12 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
                     f"Use first-person active voice: 'If I place a $50 bet on [specific]...' "
                     f"Show win and loss scenarios with exact calculations."
                 )
+            if bet_example:
+                objective = (
+                    f"Provide this WORKED EXAMPLE:\n\n{bet_example}\n\n"
+                    f"Use first-person active voice and explain it clearly. "
+                    f"The writer will add the loss scenario details later."
+                    )
             else:
                 # Regular game-day promo
                 objective = (
@@ -882,7 +888,7 @@ with st.container():
         st.subheader("🏈 Game Selection")
         col_sport, col_date = st.columns([1, 1])
         
-        sport_options = {"NFL": "nfl", "NBA": "nba", "MLB": "mlb", "NHL": "nhl"}
+        sport_options = {"NFL": "nfl", "NBA": "nba", "MLB": "mlb", "NHL": "nhl", "CFB": "ncaaf", "CBB": "ncaab"}
         
         with col_sport:
             sport_label = st.selectbox("Sport", list(sport_options.keys()))
@@ -945,6 +951,205 @@ with st.container():
     # Competitor URLs (optional, collapsed)
     with st.expander("Competitor URLs (optional)"):
         comp_urls_txt = st.text_area("One per line", height=60, label_visibility="collapsed")
+
+# =============================================================================
+# ODDS FETCHING (if game selected)
+# =============================================================================
+selected_bet = None
+bet_amount = 500
+bet_example_text = ""
+
+if ss["use_sports"] and selected_game:
+    st.subheader("📊 Betting Lines")
+
+    # Initialize odds fetcher with selected sport
+    odds_fetcher = CharlotteOddsFetcher(sport=sport_selected)
+
+    # Determine week/season identifier (format varies by sport)
+    # NFL & CFB both use: "2025-reg-XX" format
+    # TODO: Make dynamic based on target_date and sport
+    if sport_selected == "nfl":
+        week_id = "2025-reg-13"  # TODO: Calculate from target_date
+    elif sport_selected == "ncaaf":
+        week_id = "2025-reg-14"  # TODO: Calculate from target_date (CFB week 14)
+    else:
+        week_id = "2025-reg-13"  # Generic fallback
+    
+    # Fetch odds
+    with st.spinner(f"Loading odds ..."):
+        try:
+            odds_fetcher.fetch_week_odds(week_id)
+            
+            # Find game by team names
+            away_team = selected_game.get("away_team", "")
+            home_team = selected_game.get("home_team", "")
+            
+            # Extract just team names (e.g., "Green Bay Packers" -> "Packers")
+            away_short = away_team.split()[-1] if away_team else ""
+            home_short = home_team.split()[-1] if home_team else ""
+            
+            game = odds_fetcher.find_game_by_teams(away_short, home_short)
+            
+            if game:
+                # Get selected operator from offer_row
+                selected_operator = offer_row.get("brand", "").lower()
+                
+                # Map brand names to sportsbook keys
+                operator_map = {
+                    "draftkings": "draftkings",
+                    "fanduel": "fanduel",
+                    "betmgm": "betmgm",
+                    "caesars": "caesars",
+                    "bet365": "bet365",
+                    "hard rock": "hardrock",
+                    "fanatics": "fanatics",
+                }
+                
+                sportsbook_key = operator_map.get(selected_operator, "draftkings")
+                
+                # Get all odds for this game
+                game_odds = odds_fetcher.get_all_odds_for_game(game, sportsbook_key)
+                
+                # Display odds in a nice format
+                col_odds1, col_odds2 = st.columns(2)
+                
+                with col_odds1:
+                    st.write("**Spread**")
+                    st.caption(game_odds['spread'])
+                    
+                    st.write("**Moneyline**")
+                    st.caption(game_odds['moneyline'])
+                
+                with col_odds2:
+                    st.write("**Total (Over/Under)**")
+                    st.caption(game_odds['total'])
+                
+                # Build bet options for dropdown
+                spread_raw = game_odds['spread_raw']
+                ml_raw = game_odds['moneyline_raw']
+                total_raw = game_odds['total_raw']
+                
+                bet_options = []
+                
+                if spread_raw:
+                    # Away spread
+                    if spread_raw['favorite'] == 'home':
+                        bet_options.append({
+                            'label': f"{spread_raw['away_team']} +{spread_raw['line']} ({spread_raw['away_odds']:+d})",
+                            'odds': spread_raw['away_odds'],
+                            'type': 'spread',
+                            'selection': f"{spread_raw['away_team']} +{spread_raw['line']}"
+                        })
+                        bet_options.append({
+                            'label': f"{spread_raw['home_team']} -{spread_raw['line']} ({spread_raw['home_odds']:+d})",
+                            'odds': spread_raw['home_odds'],
+                            'type': 'spread',
+                            'selection': f"{spread_raw['home_team']} -{spread_raw['line']}"
+                        })
+                    else:
+                        bet_options.append({
+                            'label': f"{spread_raw['away_team']} -{spread_raw['line']} ({spread_raw['away_odds']:+d})",
+                            'odds': spread_raw['away_odds'],
+                            'type': 'spread',
+                            'selection': f"{spread_raw['away_team']} -{spread_raw['line']}"
+                        })
+                        bet_options.append({
+                            'label': f"{spread_raw['home_team']} +{spread_raw['line']} ({spread_raw['home_odds']:+d})",
+                            'odds': spread_raw['home_odds'],
+                            'type': 'spread',
+                            'selection': f"{spread_raw['home_team']} +{spread_raw['line']}"
+                        })
+                
+                if ml_raw:
+                    bet_options.append({
+                        'label': f"{ml_raw['away_team']} Moneyline ({ml_raw['away_odds']:+d})",
+                        'odds': ml_raw['away_odds'],
+                        'type': 'moneyline',
+                        'selection': f"{ml_raw['away_team']} moneyline"
+                    })
+                    bet_options.append({
+                        'label': f"{ml_raw['home_team']} Moneyline ({ml_raw['home_odds']:+d})",
+                        'odds': ml_raw['home_odds'],
+                        'type': 'moneyline',
+                        'selection': f"{ml_raw['home_team']} moneyline"
+                    })
+                
+                if total_raw:
+                    bet_options.append({
+                        'label': f"Over {total_raw['line']} ({total_raw['over_odds']:+d})",
+                        'odds': total_raw['over_odds'],
+                        'type': 'total',
+                        'selection': f"Over {total_raw['line']}"
+                    })
+                    bet_options.append({
+                        'label': f"Under {total_raw['line']} ({total_raw['under_odds']:+d})",
+                        'odds': total_raw['under_odds'],
+                        'type': 'total',
+                        'selection': f"Under {total_raw['line']}"
+                    })
+                
+                st.divider()
+                st.subheader("🎯 Betting Example Builder")
+                
+                col_bet, col_amount = st.columns([3, 1])
+                
+                with col_bet:
+                    bet_idx = st.selectbox(
+                        "Select bet for example",
+                        options=list(range(len(bet_options))),
+                        format_func=lambda i: bet_options[i]['label'],
+                        help="This bet will be used in the 'How to Claim' section example"
+                    )
+                    selected_bet = bet_options[bet_idx]
+                
+                with col_amount:
+                    bet_amount = st.number_input(
+                        "Bet amount",
+                        min_value=5,
+                        max_value=5000,
+                        value=500,
+                        step=50,
+                        help="Amount for the example bet"
+                    )
+                
+                # Calculate profit
+                odds = selected_bet['odds']
+                if odds > 0:
+                    # Positive odds: profit = (stake × odds) / 100
+                    profit = (bet_amount * odds) / 100
+                else:
+                    # Negative odds: profit = (stake × 100) / |odds|
+                    profit = (bet_amount * 100) / abs(odds)
+                
+                profit = round(profit, 2)
+                
+                # Show preview
+                st.info(
+                    f"**Example Preview:**\n\n"
+                    f"Bet: ${bet_amount} on {selected_bet['selection']}\n\n"
+                    f"✅ **If it wins:** ${profit:.2f} profit + ${bet_amount} stake back = **${profit + bet_amount:.2f} total**"
+                )
+                
+                # Build example text for prompts
+                operator_name = odds_fetcher.SPORTSBOOK_NAMES.get(sportsbook_key, sportsbook_key.title())
+                
+                bet_example_text = (
+                    f"Suppose I place a ${bet_amount} first bet on the {selected_bet['selection']} "
+                    f"in {event_context}:\n"
+                    f"* If the bet wins, I receive ${profit:.2f} in profit and my ${bet_amount} stake back.\n"
+                    f"* If the bet loses, [writer adds bonus bet details from terms]"
+                )
+                
+                st.success("✅ Betting example ready - will be added to 'How to Claim' section")
+                
+            else:
+                st.warning(f"⚠️ Odds not available for {away_team} @ {home_team}")
+                
+        except Exception as e:
+            st.error(f"Failed to load odds: {e}")
+            import traceback
+            if os.getenv("DEBUG"):
+                st.code(traceback.format_exc())
 
 # Generate Outline button
 if st.button("Generate Outline", type="primary"):
@@ -1082,7 +1287,8 @@ with col_gen:
                     target_date=target_datetime,
                     keyword=ss.get("keyword", ""),
                     is_mo_launch=ss["mo_launch"],
-                    alt_offers=ss.get("selected_alt_offers", []),  # NEW
+                    alt_offers=ss.get("selected_alt_offers", []),
+                    bet_example=bet_example_text,
 
                 )
                 ss["box_mode"] = "draft"
