@@ -117,6 +117,17 @@ class BAMOffersFetcher:
         if not impression_url and impression_urls:
             impression_url = impression_urls[0]
 
+        # Build switchboard link in the correct format
+        # Format: https://switchboard.actionnetwork.com/offers?affiliateId=1&dynamic=true&context=web-article-top-stories&stateCode=
+        affiliate_id = affiliate.get('id', '1')
+        switchboard_link = (
+            f"https://switchboard.actionnetwork.com/offers?"
+            f"affiliateId={affiliate_id}&"
+            f"dynamic=true&"
+            f"context=web-article-top-stories&"
+            f"stateCode="
+        )
+
         # Build standardized offer dict
         offer = {
             # BAM-specific fields
@@ -135,8 +146,9 @@ class BAMOffersFetcher:
             'affiliate_terms': additional_attrs.get('affiliate_terms', promo.get('terms', '')),
 
             # Links
-            'switchboard_link': impression_url,
-            'url': impression_url,
+            'switchboard_link': switchboard_link,
+            'url': switchboard_link,
+            'impression_url': impression_url,  # Keep original for reference
 
             # Images
             'logo_url': logo_url,
@@ -158,32 +170,45 @@ class BAMOffersFetcher:
 
     def _build_shortcode(self, promo: Dict[str, Any]) -> str:
         """
-        Build WordPress shortcode for the promotion
+        Build WordPress BAM shortcode for the promotion
 
         Args:
             promo: Raw promotion dict from BAM API
 
         Returns:
-            WordPress shortcode string
+            WordPress shortcode string in BAM format
+            Example: [bam-inline-promotion placement-id="2037" property-id="1"
+                     context="web-article-top-stories" internal-id="evergreen"
+                     affiliate-type="sportsbook" affiliate="betmgm"]
         """
         affiliate = promo.get('affiliate', {})
-        additional_attrs = promo.get('additional_attributes', {})
+        internal_identifiers = promo.get('internal_identifiers', [])
 
-        brand = affiliate.get('display_name', affiliate.get('name', ''))
-        promo_id = promo.get('id', '')
-        bonus_code = additional_attrs.get('bonus_code', '')
+        # Extract required fields
+        affiliate_name = affiliate.get('name', '').lower()
+        affiliate_type = affiliate.get('affiliate_type', 'sportsbook').lower()
 
-        # Build shortcode
-        # Format: [promo_card brand="BetMGM" code="ACTION1600" id="30858"]
-        shortcode = f'[promo_card brand="{brand}"'
+        # Get primary internal identifier (prefer 'evergreen' or first in list)
+        internal_id = 'evergreen'
+        if internal_identifiers:
+            if 'evergreen' in internal_identifiers:
+                internal_id = 'evergreen'
+            elif 'evergreen2' in internal_identifiers:
+                internal_id = 'evergreen2'
+            else:
+                internal_id = internal_identifiers[0]
 
-        if bonus_code:
-            shortcode += f' code="{bonus_code}"'
-
-        if promo_id:
-            shortcode += f' id="{promo_id}"'
-
-        shortcode += ']'
+        # Build BAM shortcode
+        # Format: [bam-inline-promotion placement-id="2037" property-id="1" ...]
+        shortcode = (
+            f'[bam-inline-promotion '
+            f'placement-id="2037" '
+            f'property-id="1" '
+            f'context="web-article-top-stories" '
+            f'internal-id="{internal_id}" '
+            f'affiliate-type="{affiliate_type}" '
+            f'affiliate="{affiliate_name}"]'
+        )
 
         return shortcode
 
