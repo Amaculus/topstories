@@ -118,12 +118,13 @@ class BAMOffersFetcher:
             impression_url = impression_urls[0]
 
         # Build switchboard link in the correct format
-        # Format: https://switchboard.actionnetwork.com/offers?affiliateId=1&dynamic=true&context=web-article-top-stories&stateCode=
+        # Format: https://switchboard.actionnetwork.com/offers?affiliateId=1895&campaignId=6641&context=web-article-top-stories&stateCode=
         affiliate_id = affiliate.get('id', '1')
+        campaign_id = campaign.get('id', '')
         switchboard_link = (
             f"https://switchboard.actionnetwork.com/offers?"
             f"affiliateId={affiliate_id}&"
-            f"dynamic=true&"
+            f"campaignId={campaign_id}&"
             f"context=web-article-top-stories&"
             f"stateCode="
         )
