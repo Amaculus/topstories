@@ -966,12 +966,17 @@ if ss["use_sports"] and selected_game:
     odds_fetcher = CharlotteOddsFetcher(sport=sport_selected)
 
     # Determine week/season identifier (format varies by sport)
-    # NFL & CFB both use: "2025-reg-XX" format
+    # NFL & CFB both use: "2025-reg-XX" or "2025-post-X" format
     # TODO: Make dynamic based on target_date and sport
     if sport_selected == "nfl":
         week_id = "2025-reg-13"  # TODO: Calculate from target_date
     elif sport_selected == "ncaaf":
-        week_id = "2025-reg-14"  # TODO: Calculate from target_date (CFB week 14)
+        # CFB bowl season starts mid-December
+        # Use postseason format for games after Dec 15
+        if target_datetime and target_datetime.month == 12 and target_datetime.day >= 15:
+            week_id = "2025-post-1"  # Bowl season
+        else:
+            week_id = "2025-reg-14"  # Regular season
     else:
         week_id = "2025-reg-13"  # Generic fallback
     
@@ -983,12 +988,27 @@ if ss["use_sports"] and selected_game:
             # Find game by team names
             away_team = selected_game.get("away_team", "")
             home_team = selected_game.get("home_team", "")
-            
-            # Extract just team names (e.g., "Green Bay Packers" -> "Packers")
+
+            # Try different team name formats for matching
+            # Charlotte API uses keys like "CAL", "HAW" or mascots like "Golden Bears"
+            game = None
+
+            # Strategy 1: Try last word (NFL style: "Green Bay Packers" -> "Packers")
             away_short = away_team.split()[-1] if away_team else ""
             home_short = home_team.split()[-1] if home_team else ""
-            
             game = odds_fetcher.find_game_by_teams(away_short, home_short)
+
+            # Strategy 2: If not found, try last 2 words for CFB (e.g., "Golden Bears")
+            if not game and len(away_team.split()) >= 2 and len(home_team.split()) >= 2:
+                away_mascot = " ".join(away_team.split()[-2:])
+                home_mascot = " ".join(home_team.split()[-2:])
+                game = odds_fetcher.find_game_by_teams(away_mascot, home_mascot)
+
+            # Strategy 3: Try first word as team key (e.g., "California" -> might match "CAL")
+            if not game and away_team and home_team:
+                away_key = away_team.split()[0]
+                home_key = home_team.split()[0]
+                game = odds_fetcher.find_game_by_teams(away_key, home_key)
             
             if game:
                 # Get selected operator from offer_row
