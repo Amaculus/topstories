@@ -35,6 +35,12 @@ class CharlotteOddsFetcher:
         "riverscasino": "Rivers Casino"
     }
     
+    # Sports that use weekly scheduling (football)
+    WEEKLY_SPORTS = {"nfl", "ncaaf"}
+
+    # Sports that use daily scheduling
+    DAILY_SPORTS = {"nba", "mlb", "nhl", "ncaab"}
+
     def __init__(self, sport: str = "nfl"):
         """
         Initialize odds fetcher for a specific sport
@@ -45,16 +51,17 @@ class CharlotteOddsFetcher:
         self.sport = sport.lower()
         self.sport_path = self.SPORT_PATHS.get(self.sport, "nfl")
         self.base_url = f"https://charlotte.rotogrinders.com/sports/{self.sport_path}/extended"
-        self.games_cache = None
+        self.games_cache = []
         self.cache_timestamp = None
+        self.is_daily_sport = self.sport in self.DAILY_SPORTS
         
     def fetch_week_odds(self, week: str = "2025-reg-13") -> Dict[str, Any]:
         """
-        Fetch odds for an entire week
-        
+        Fetch odds for an entire week (NFL/CFB only)
+
         Args:
             week: Week identifier (e.g., "2025-reg-13", "2025-post-1")
-            
+
         Returns:
             Dict with full API response
         """
@@ -63,67 +70,126 @@ class CharlotteOddsFetcher:
             "week": week,
             "key": self.API_KEY
         }
-        
+
         try:
             response = requests.get(self.base_url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
-            
+
             # Cache the games
             self.games_cache = data.get('data', [])
             self.cache_timestamp = datetime.now()
-            
+
             return data
         except requests.exceptions.RequestException as e:
             print(f"Error fetching odds: {e}")
             return {}
+
+    def fetch_date_odds(self, target_date: datetime = None) -> Dict[str, Any]:
+        """
+        Fetch odds for a specific date (NBA/MLB/NHL/CBB)
+
+        Args:
+            target_date: Date to fetch odds for (defaults to today)
+
+        Returns:
+            Dict with full API response
+        """
+        if target_date is None:
+            target_date = datetime.now()
+
+        # Format date as YYYY-MM-DD for Charlotte API
+        date_str = target_date.strftime("%Y-%m-%d")
+
+        params = {
+            "role": "scoresandodds",
+            "date": date_str,
+            "key": self.API_KEY
+        }
+
+        try:
+            response = requests.get(self.base_url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            # Cache the games
+            self.games_cache = data.get('data', [])
+            self.cache_timestamp = datetime.now()
+
+            return data
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching odds for {date_str}: {e}")
+            return {}
+
+    def fetch_odds(self, week: str = None, target_date: datetime = None) -> Dict[str, Any]:
+        """
+        Unified method to fetch odds - automatically uses week or date based on sport
+
+        Args:
+            week: Week identifier for NFL/CFB (e.g., "2025-reg-13")
+            target_date: Date for NBA/MLB/NHL/CBB
+
+        Returns:
+            Dict with full API response
+        """
+        if self.is_daily_sport:
+            return self.fetch_date_odds(target_date)
+        else:
+            return self.fetch_week_odds(week or "2025-reg-13")
             
-    def get_all_games(self, week: str = "2025-reg-13") -> List[Dict[str, Any]]:
-        """Get list of all games with odds for a week"""
+    def get_all_games(self, week: str = "2025-reg-13", target_date: datetime = None) -> List[Dict[str, Any]]:
+        """Get list of all games with odds for a week/date"""
         if not self.games_cache:
-            self.fetch_week_odds(week)
+            self.fetch_odds(week=week, target_date=target_date)
         return self.games_cache or []
     
-    def find_game_by_teams(self, away_team: str, home_team: str) -> Optional[Dict[str, Any]]:
+    def find_game_by_teams(self, away_team: str, home_team: str, week: str = None, target_date: datetime = None) -> Optional[Dict[str, Any]]:
         """
         Find a game by team names/keys
-        
+
         Args:
             away_team: Away team key (e.g., "KC", "GB", "Chiefs", "Packers")
             home_team: Home team key
-            
+            week: Week identifier for NFL/CFB (e.g., "2025-reg-13")
+            target_date: Date for NBA/MLB/NHL/CBB
+
         Returns:
             Game dict if found, None otherwise
         """
         if not self.games_cache:
-            self.fetch_week_odds()
-            
+            self.fetch_odds(week=week, target_date=target_date)
+
         away_lower = away_team.lower()
         home_lower = home_team.lower()
-        
+
         for game in self.games_cache:
-            away = game['away']
-            home = game['home']
-            
+            away = game.get('away', {})
+            home = game.get('home', {})
+
             # Match by key or mascot
             away_match = (
-                away['key'].lower() == away_lower or 
-                away['mascot'].lower() == away_lower
+                away.get('key', '').lower() == away_lower or
+                away.get('mascot', '').lower() == away_lower
             )
             home_match = (
-                home['key'].lower() == home_lower or 
-                home['mascot'].lower() == home_lower
+                home.get('key', '').lower() == home_lower or
+                home.get('mascot', '').lower() == home_lower
             )
-            
+
             if away_match and home_match:
                 return game
-                
+
         return None
     
-    def find_game_by_id(self, game_id: int) -> Optional[Dict[str, Any]]:
-        """Find a game by Charlotte game ID"""
+    def find_game_by_id(
+        self, 
+        game_id: int, 
+        week: str = None, 
+        target_date: datetime = None
+    ) -> Optional[Dict[str, Any]]:
+        """Find a game by Charlotte game ID."""
         if not self.games_cache:
-            self.fetch_week_odds()
+            self.fetch_odds(week=week, target_date=target_date)
             
         for game in self.games_cache:
             if game['id'] == game_id:
@@ -323,18 +389,26 @@ class CharlotteOddsFetcher:
 
 
 # Convenience function for quick usage
-def get_game_odds(away_team: str, home_team: str, sportsbook: str = "draftkings", week: str = "2025-reg-13", sport: str = "nfl"):
+def get_game_odds(
+    away_team: str, 
+    home_team: str, 
+    sportsbook: str = "draftkings", 
+    week: str = "2025-reg-13", 
+    sport: str = "nfl",
+    target_date: datetime = None
+):
     """
     Quick function to get odds for a game
 
     Usage:
         odds = get_game_odds("Chiefs", "Cowboys", "draftkings", sport="nfl")
         odds = get_game_odds("Georgia", "Alabama", "draftkings", sport="ncaaf")
+        odds = get_game_odds("Suns", "76ers", "draftkings", sport="nba")
         print(odds['spread'])
     """
     fetcher = CharlotteOddsFetcher(sport=sport)
-    fetcher.fetch_week_odds(week)
-    game = fetcher.find_game_by_teams(away_team, home_team)
+    fetcher.fetch_odds(week=week, target_date=target_date)
+    game = fetcher.find_game_by_teams(away_team, home_team, week=week, target_date=target_date)
 
     if not game:
         return None

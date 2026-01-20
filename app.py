@@ -1040,25 +1040,24 @@ if ss["use_sports"] and selected_game:
     # Initialize odds fetcher with selected sport
     odds_fetcher = CharlotteOddsFetcher(sport=sport_selected)
 
-    # Determine week/season identifier (format varies by sport)
-    # NFL & CFB both use: "2025-reg-XX" or "2025-post-X" format
-    # TODO: Make dynamic based on target_date and sport
-    if sport_selected == "nfl":
-        week_id = "2025-reg-13"  # TODO: Calculate from target_date
-    elif sport_selected == "ncaaf":
-        # CFB bowl season starts mid-December
-        # Use postseason format for games after Dec 15
-        if target_datetime and target_datetime.month == 12 and target_datetime.day >= 15:
-            week_id = "2025-post-1"  # Bowl season
-        else:
-            week_id = "2025-reg-14"  # Regular season
-    else:
-        week_id = "2025-reg-13"  # Generic fallback
-    
-    # Fetch odds
+    # Fetch odds - use different methods for weekly vs daily sports
+    # NFL/CFB use week identifiers, NBA/MLB/NHL/CBB use dates
     with st.spinner(f"Loading odds ..."):
         try:
-            odds_fetcher.fetch_week_odds(week_id)
+            if sport_selected in ["nfl", "ncaaf"]:
+                # Weekly sports - determine week identifier
+                if sport_selected == "nfl":
+                    week_id = "2025-reg-13"  # TODO: Calculate from target_date
+                else:  # ncaaf
+                    # CFB bowl season starts mid-December
+                    if target_datetime and target_datetime.month == 12 and target_datetime.day >= 15:
+                        week_id = "2025-post-1"  # Bowl season
+                    else:
+                        week_id = "2025-reg-14"  # Regular season
+                odds_fetcher.fetch_week_odds(week_id)
+            else:
+                # Daily sports (NBA, MLB, NHL, CBB) - use date
+                odds_fetcher.fetch_date_odds(target_datetime)
             
             # Find game by team names
             away_team = selected_game.get("away_team", "")
@@ -1084,6 +1083,14 @@ if ss["use_sports"] and selected_game:
                 away_key = away_team.split()[0]
                 home_key = home_team.split()[0]
                 game = odds_fetcher.find_game_by_teams(away_key, home_key)
+
+            # Strategy 4: For NBA, try city name matching (e.g., "Phoenix Suns" -> "PHX" or "Suns")
+            if not game and sport_selected in ["nba", "nhl", "mlb"]:
+                # Try just the team name without city
+                if len(away_team.split()) > 1:
+                    away_name = away_team.split()[-1]
+                    home_name = home_team.split()[-1]
+                    game = odds_fetcher.find_game_by_teams(away_name, home_name)
             
             if game:
                 # Get selected operator from offer_row
@@ -1239,7 +1246,16 @@ if ss["use_sports"] and selected_game:
                 
             else:
                 st.warning(f"⚠️ Odds not available for {away_team} @ {home_team}")
-                
+                # Show debug info
+                if os.getenv("DEBUG") and odds_fetcher.games_cache:
+                    st.caption(f"Available games ({len(odds_fetcher.games_cache)}):")
+                    for g in odds_fetcher.games_cache[:5]:
+                        away_info = g.get('away', {})
+                        home_info = g.get('home', {})
+                        st.caption(f"  {away_info.get('key', '?')} {away_info.get('mascot', '?')} @ {home_info.get('key', '?')} {home_info.get('mascot', '?')}")
+                elif not odds_fetcher.games_cache:
+                    st.caption(f"No games found in Charlotte API for {sport_selected.upper()}")
+
         except Exception as e:
             st.error(f"Failed to load odds: {e}")
             import traceback
