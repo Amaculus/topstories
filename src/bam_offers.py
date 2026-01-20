@@ -44,6 +44,13 @@ PROPERTIES = {
         "name": "ScoresAndOdds",
         "default_context": "web-article-top-stories"
     },
+    "sportshandle": {
+        "property_id": "5",
+        "placement_id": "2040",
+        "switchboard_domain": "switchboard.actionnetwork.com",
+        "name": "SportsHandle",
+        "default_context": "web-article-top-stories"
+    },
     "fantasy_labs": {
         "property_id": "11",
         "placement_id": "2041",
