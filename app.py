@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
 import markdown
 import pandas as pd
+import logging
 from src.odds_fetcher import CharlotteOddsFetcher
 # -----------------------------------------------------------------------------
 # Env & defaults
@@ -129,6 +130,23 @@ def _is_debug_enabled() -> bool:
     return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
 DEBUG_ENABLED = _is_debug_enabled()
+
+logger = logging.getLogger("planwrite")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+logger.setLevel(logging.DEBUG if DEBUG_ENABLED else logging.INFO)
+
+
+def log_debug(message: str) -> None:
+    if DEBUG_ENABLED:
+        logger.info(message)
+
+
+def log_exception(message: str) -> None:
+    logger.exception(message)
 
 def get_alternative_offers(offers_df: pd.DataFrame, main_offer_row: dict) -> list[dict]:
     """Find other offers from the same brand as the main offer."""
@@ -996,6 +1014,7 @@ with st.container():
             if games:
                 if DEBUG_ENABLED:
                     st.caption(f"ESPN returned {len(games)} {sport_label} games for {target_date.isoformat()}")
+                log_debug(f"ESPN returned {len(games)} {sport_selected} games for {target_date.isoformat()}")
                 prime = filter_prime_time_games(games)
                 default_game = prime[0] if prime else games[0]
                 default_idx = games.index(default_game) if default_game in games else 0
@@ -1004,6 +1023,7 @@ with st.container():
                 game_options = [format_game_for_dropdown(g) for g in games]
                 if DEBUG_ENABLED:
                     st.caption("Sample games: " + " | ".join(game_options[:3]))
+                log_debug(f"Sample games: {' | '.join(game_options[:3])}")
                 selected_idx = st.selectbox(
                     f"Game ({len(games)} available)",
                     options=list(range(len(games))),
@@ -1022,6 +1042,7 @@ with st.container():
             if DEBUG_ENABLED:
                 import traceback
                 st.code(traceback.format_exc())
+            log_exception("Failed to fetch games")
     
     # Show content type indicator
     if ss["mo_launch"] and ss["use_sports"]:
@@ -1073,10 +1094,13 @@ if ss["use_sports"] and selected_game:
                         week_id = "2025-post-1"  # Bowl season
                     else:
                         week_id = "2025-reg-14"  # Regular season
+                log_debug(f"Fetching odds for {sport_selected} week {week_id}")
                 odds_fetcher.fetch_week_odds(week_id)
             else:
                 # Daily sports (NBA, MLB, NHL, CBB) - use date
+                log_debug(f"Fetching odds for {sport_selected} date {target_datetime.date() if target_datetime else 'today'}")
                 odds_fetcher.fetch_date_odds(target_datetime)
+            log_debug(f"Charlotte returned {len(odds_fetcher.games_cache)} games")
             
             # Find game by team names
             away_team = selected_game.get("away_team", "")
@@ -1112,6 +1136,7 @@ if ss["use_sports"] and selected_game:
                     game = odds_fetcher.find_game_by_teams(away_name, home_name)
             
             if game:
+                log_debug(f"Matched game: {away_team} @ {home_team}")
                 # Get selected operator from offer_row
                 selected_operator = offer_row.get("brand", "").lower()
                 
@@ -1277,12 +1302,19 @@ if ss["use_sports"] and selected_game:
                         st.caption(f"  {away_info.get('key', '?')} {away_info.get('mascot', '?')} @ {home_info.get('key', '?')} {home_info.get('mascot', '?')}")
                 elif DEBUG_ENABLED and not odds_fetcher.games_cache:
                     st.caption(f"No games found in Charlotte API for {sport_selected.upper()}")
+                sample_games = []
+                for g in odds_fetcher.games_cache[:5]:
+                    away_info = g.get('away', {})
+                    home_info = g.get('home', {})
+                    sample_games.append(f"{away_info.get('key', '?')} {away_info.get('mascot', '?')} @ {home_info.get('key', '?')} {home_info.get('mascot', '?')}")
+                log_debug(f"No odds match for {away_team} @ {home_team}. Sample: {sample_games}")
 
         except Exception as e:
             st.error(f"Failed to load odds: {e}")
             import traceback
             if DEBUG_ENABLED:
                 st.code(traceback.format_exc())
+            log_exception("Failed to load odds")
 
 # Generate Outline button
 if st.button("Generate Outline", type="primary"):
