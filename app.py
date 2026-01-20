@@ -1026,32 +1026,34 @@ with st.container():
         target_datetime = datetime.combine(target_date, datetime.min.time()).replace(tzinfo=ZoneInfo("America/New_York"))
         
         try:
+            logging.info(f"GAME_SELECT: Fetching games for {sport_selected}")
             games = get_games_for_date(sport_selected, target_datetime)
             if games:
-                st.write(f"DEBUG: Got {len(games)} games")  # DEBUG
-                log_debug(f"ESPN returned {len(games)} {sport_selected} games for {target_date.isoformat()}")
+                logging.info(f"GAME_SELECT: Got {len(games)} games")
 
-                st.write("DEBUG: About to filter prime time")  # DEBUG
+                logging.info("GAME_SELECT: About to filter prime time")
                 prime = filter_prime_time_games(games)
                 default_game = prime[0] if prime else games[0]
                 default_idx = games.index(default_game) if default_game in games else 0
+                logging.info(f"GAME_SELECT: default_idx={default_idx}")
 
-                st.write("DEBUG: About to create game_options")  # DEBUG
-                # Game selector
+                logging.info("GAME_SELECT: About to create game_options")
                 game_options = [format_game_for_dropdown(g) for g in games]
-                st.write(f"DEBUG: Created {len(game_options)} options")  # DEBUG
-                log_debug(f"Sample games: {' | '.join(game_options[:3])}")
+                logging.info(f"GAME_SELECT: Created {len(game_options)} options")
+                logging.info(f"GAME_SELECT: First option: {game_options[0] if game_options else 'NONE'}")
 
-                st.write("DEBUG: About to render selectbox")  # DEBUG
+                logging.info("GAME_SELECT: About to render selectbox")
                 selected_idx = st.selectbox(
                     f"Game ({len(games)} available)",
                     options=list(range(len(games))),
                     format_func=lambda i: game_options[i],
                     index=default_idx
                 )
-                st.write(f"DEBUG: Selectbox rendered, idx={selected_idx}")  # DEBUG
+                logging.info(f"GAME_SELECT: Selectbox rendered, idx={selected_idx}")
                 selected_game = games[selected_idx]
+                logging.info(f"GAME_SELECT: Selected game set")
                 event_context = format_event_for_prompt(selected_game, target_datetime)
+                logging.info(f"GAME_SELECT: event_context created")
                 
                 is_prime = selected_game in prime if prime else False
                 st.caption(f"📅 {event_context} {'⭐' if is_prime else ''}")
@@ -1163,7 +1165,8 @@ if ss["use_sports"] and selected_game:
             if game:
                 log_debug(f"ODDS SECTION: Matched game: {away_team} @ {home_team}")
                 # Get selected operator from offer_row
-                selected_operator = offer_row.get("brand", "").lower()
+                selected_operator = offer_row.get("brand", "")
+                selected_operator = selected_operator.lower() if isinstance(selected_operator, str) else ""
                 log_debug(f"ODDS SECTION: Using operator: {selected_operator}")
                 
                 # Map brand names to sportsbook keys
@@ -1178,9 +1181,16 @@ if ss["use_sports"] and selected_game:
                 }
                 
                 sportsbook_key = operator_map.get(selected_operator, "draftkings")
+                log_debug(f"ODDS SECTION: Book key: {sportsbook_key}")
                 
                 # Get all odds for this game
                 game_odds = odds_fetcher.get_all_odds_for_game(game, sportsbook_key)
+                log_debug(
+                    "ODDS SECTION: Odds text spread=%s ml=%s total=%s",
+                    game_odds.get("spread"),
+                    game_odds.get("moneyline"),
+                    game_odds.get("total"),
+                )
                 
                 # Display odds in a nice format
                 col_odds1, col_odds2 = st.columns(2)
@@ -1259,10 +1269,13 @@ if ss["use_sports"] and selected_game:
                         'type': 'total',
                         'selection': f"Under {total_raw['line']}"
                     })
+                log_debug(f"ODDS SECTION: Built {len(bet_options)} bet options")
 
                 if not bet_options:
+                    log_debug("ODDS SECTION: No bettable lines available for this game.")
                     st.warning("No bettable lines available for this game yet.")
                 else:
+                    log_debug("ODDS SECTION: Rendering bet example builder.")
                     st.divider()
                     st.subheader("🎯 Betting Example Builder")
                     
@@ -1276,6 +1289,7 @@ if ss["use_sports"] and selected_game:
                             help="This bet will be used in the 'How to Claim' section example"
                         )
                         selected_bet = bet_options[bet_idx]
+                        log_debug(f"ODDS SECTION: Selected bet index {bet_idx}")
                     
                     with col_amount:
                         bet_amount = st.number_input(
