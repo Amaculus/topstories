@@ -1028,24 +1028,28 @@ with st.container():
         try:
             games = get_games_for_date(sport_selected, target_datetime)
             if games:
-                if DEBUG_ENABLED:
-                    st.caption(f"ESPN returned {len(games)} {sport_label} games for {target_date.isoformat()}")
+                st.write(f"DEBUG: Got {len(games)} games")  # DEBUG
                 log_debug(f"ESPN returned {len(games)} {sport_selected} games for {target_date.isoformat()}")
+
+                st.write("DEBUG: About to filter prime time")  # DEBUG
                 prime = filter_prime_time_games(games)
                 default_game = prime[0] if prime else games[0]
                 default_idx = games.index(default_game) if default_game in games else 0
-                
+
+                st.write("DEBUG: About to create game_options")  # DEBUG
                 # Game selector
                 game_options = [format_game_for_dropdown(g) for g in games]
-                if DEBUG_ENABLED:
-                    st.caption("Sample games: " + " | ".join(game_options[:3]))
+                st.write(f"DEBUG: Created {len(game_options)} options")  # DEBUG
                 log_debug(f"Sample games: {' | '.join(game_options[:3])}")
+
+                st.write("DEBUG: About to render selectbox")  # DEBUG
                 selected_idx = st.selectbox(
                     f"Game ({len(games)} available)",
                     options=list(range(len(games))),
                     format_func=lambda i: game_options[i],
                     index=default_idx
                 )
+                st.write(f"DEBUG: Selectbox rendered, idx={selected_idx}")  # DEBUG
                 selected_game = games[selected_idx]
                 event_context = format_event_for_prompt(selected_game, target_datetime)
                 
@@ -1094,6 +1098,7 @@ bet_example_text = ""
 
 if ss["use_sports"] and selected_game:
     log_debug("ODDS SECTION: Starting betting lines section")
+    st.write("DEBUG: About to show betting lines")  # VISIBLE DEBUG
     st.subheader("📊 Betting Lines")
 
     # Initialize odds fetcher with selected sport
