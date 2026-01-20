@@ -195,6 +195,16 @@ class CharlotteOddsFetcher:
             if game['id'] == game_id:
                 return game
         return None
+
+    @staticmethod
+    def _coerce_american_odds(value: Any) -> Optional[int]:
+        """Return odds as int when possible; otherwise None."""
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
     
     def get_spread_odds(
         self, 
@@ -224,12 +234,20 @@ class CharlotteOddsFetcher:
             
             # Get odds for specified book (fallback to default)
             book_odds = comparison.get(sportsbook.lower(), odds)
-            
+
+            line = book_odds.get('value')
+            favorite = book_odds.get('favorite')
+            away_odds = self._coerce_american_odds(book_odds.get('away'))
+            home_odds = self._coerce_american_odds(book_odds.get('home'))
+
+            if line is None or favorite is None or away_odds is None or home_odds is None:
+                return None
+
             return {
-                'line': book_odds['value'],
-                'favorite': book_odds['favorite'],
-                'away_odds': book_odds['away'],
-                'home_odds': book_odds['home'],
+                'line': line,
+                'favorite': favorite,
+                'away_odds': away_odds,
+                'home_odds': home_odds,
                 'away_team': game['away']['mascot'],
                 'home_team': game['home']['mascot'],
                 'away_key': game['away']['key'],
@@ -248,11 +266,16 @@ class CharlotteOddsFetcher:
             odds = game['odds']['current']['moneyline']
             comparison = odds.get('comparison', {})
             book_odds = comparison.get(sportsbook.lower(), odds)
-            
+
+            away_odds = self._coerce_american_odds(book_odds.get('away'))
+            home_odds = self._coerce_american_odds(book_odds.get('home'))
+            if away_odds is None or home_odds is None:
+                return None
+
             return {
-                'away_odds': book_odds['away'],
-                'home_odds': book_odds['home'],
-                'favorite': book_odds['favorite'],
+                'away_odds': away_odds,
+                'home_odds': home_odds,
+                'favorite': book_odds.get('favorite'),
                 'away_team': game['away']['mascot'],
                 'home_team': game['home']['mascot'],
                 'away_key': game['away']['key'],
@@ -271,12 +294,18 @@ class CharlotteOddsFetcher:
             odds = game['odds']['current']['total']
             comparison = odds.get('comparison', {})
             book_odds = comparison.get(sportsbook.lower(), odds)
-            
+
+            line = book_odds.get('value')
+            over_odds = self._coerce_american_odds(book_odds.get('over'))
+            under_odds = self._coerce_american_odds(book_odds.get('under'))
+            if line is None or over_odds is None or under_odds is None:
+                return None
+
             return {
-                'line': book_odds['value'],
-                'over_odds': book_odds['over'],
-                'under_odds': book_odds['under'],
-                'favorite': book_odds['favorite']
+                'line': line,
+                'over_odds': over_odds,
+                'under_odds': under_odds,
+                'favorite': book_odds.get('favorite')
             }
         except (KeyError, TypeError):
             return None

@@ -1189,60 +1189,63 @@ if ss["use_sports"] and selected_game:
                         'type': 'total',
                         'selection': f"Under {total_raw['line']}"
                     })
-                
-                st.divider()
-                st.subheader("🎯 Betting Example Builder")
-                
-                col_bet, col_amount = st.columns([3, 1])
-                
-                with col_bet:
-                    bet_idx = st.selectbox(
-                        "Select bet for example",
-                        options=list(range(len(bet_options))),
-                        format_func=lambda i: bet_options[i]['label'],
-                        help="This bet will be used in the 'How to Claim' section example"
-                    )
-                    selected_bet = bet_options[bet_idx]
-                
-                with col_amount:
-                    bet_amount = st.number_input(
-                        "Bet amount",
-                        min_value=5,
-                        max_value=5000,
-                        value=500,
-                        step=50,
-                        help="Amount for the example bet"
-                    )
-                
-                # Calculate profit
-                odds = selected_bet['odds']
-                if odds > 0:
-                    # Positive odds: profit = (stake × odds) / 100
-                    profit = (bet_amount * odds) / 100
+
+                if not bet_options:
+                    st.warning("No bettable lines available for this game yet.")
                 else:
-                    # Negative odds: profit = (stake × 100) / |odds|
-                    profit = (bet_amount * 100) / abs(odds)
-                
-                profit = round(profit, 2)
-                
-                # Show preview
-                st.info(
-                    f"**Example Preview:**\n\n"
-                    f"Bet: ${bet_amount} on {selected_bet['selection']}\n\n"
-                    f"✅ **If it wins:** ${profit:.2f} profit + ${bet_amount} stake back = **${profit + bet_amount:.2f} total**"
-                )
-                
-                # Build example text for prompts
-                operator_name = odds_fetcher.SPORTSBOOK_NAMES.get(sportsbook_key, sportsbook_key.title())
-                
-                bet_example_text = (
-                    f"Suppose I place a ${bet_amount} first bet on the {selected_bet['selection']} "
-                    f"in {event_context}:\n"
-                    f"* If the bet wins, I receive ${profit:.2f} in profit and my ${bet_amount} stake back.\n"
-                    f"* If the bet loses, [writer adds bonus bet details from terms]"
-                )
-                
-                st.success("✅ Betting example ready - will be added to 'How to Claim' section")
+                    st.divider()
+                    st.subheader("🎯 Betting Example Builder")
+                    
+                    col_bet, col_amount = st.columns([3, 1])
+                    
+                    with col_bet:
+                        bet_idx = st.selectbox(
+                            "Select bet for example",
+                            options=list(range(len(bet_options))),
+                            format_func=lambda i: bet_options[i]['label'],
+                            help="This bet will be used in the 'How to Claim' section example"
+                        )
+                        selected_bet = bet_options[bet_idx]
+                    
+                    with col_amount:
+                        bet_amount = st.number_input(
+                            "Bet amount",
+                            min_value=5,
+                            max_value=5000,
+                            value=500,
+                            step=50,
+                            help="Amount for the example bet"
+                        )
+                    
+                    # Calculate profit
+                    odds = selected_bet['odds']
+                    if odds > 0:
+                        # Positive odds: profit = (stake × odds) / 100
+                        profit = (bet_amount * odds) / 100
+                    else:
+                        # Negative odds: profit = (stake × 100) / |odds|
+                        profit = (bet_amount * 100) / abs(odds)
+                    
+                    profit = round(profit, 2)
+                    
+                    # Show preview
+                    st.info(
+                        f"**Example Preview:**\n\n"
+                        f"Bet: ${bet_amount} on {selected_bet['selection']}\n\n"
+                        f"✅ **If it wins:** ${profit:.2f} profit + ${bet_amount} stake back = **${profit + bet_amount:.2f} total**"
+                    )
+                    
+                    # Build example text for prompts
+                    operator_name = odds_fetcher.SPORTSBOOK_NAMES.get(sportsbook_key, sportsbook_key.title())
+                    
+                    bet_example_text = (
+                        f"Suppose I place a ${bet_amount} first bet on the {selected_bet['selection']} "
+                        f"in {event_context}:\n"
+                        f"* If the bet wins, I receive ${profit:.2f} in profit and my ${bet_amount} stake back.\n"
+                        f"* If the bet loses, [writer adds bonus bet details from terms]"
+                    )
+                    
+                    st.success("✅ Betting example ready - will be added to 'How to Claim' section")
                 
             else:
                 st.warning(f"⚠️ Odds not available for {away_team} @ {home_team}")
