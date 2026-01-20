@@ -26,7 +26,7 @@ if not os.getenv("OFFERS_SHEET_TAB") and not os.getenv("OFFERS_WORKSHEET"):
 # -----------------------------------------------------------------------------
 from src.rag_store import query_articles
 from src.offers_layer import get_offers_df_cached, get_offer_by_id, render_offer_block
-from src.bam_offers import get_bam_offers, BAMOffersFetcher
+from src.bam_offers import get_bam_offers, BAMOffersFetcher, get_available_properties, PROPERTIES
 from src.internal_links import suggest_links_for_brief
 from src.validators import disclaimer_for_state
 from src.prompt_factory import make_promptsect, make_intro_prompt
@@ -779,7 +779,7 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
 
 with st.container():
     # Source selection toggle
-    col_source, col_spacer = st.columns([3, 9])
+    col_source, col_property, col_spacer = st.columns([2, 3, 7])
     with col_source:
         offers_source = st.radio(
             "Offers Source",
@@ -789,14 +789,30 @@ with st.container():
             help="BAM API is faster and more reliable"
         )
 
+    # Property selector (only shown when BAM API is selected)
+    selected_property_key = "action_network"  # default
+    with col_property:
+        if offers_source == "BAM API":
+            property_options = get_available_properties()
+            property_display_names = list(property_options.values())
+            property_keys = list(property_options.keys())
+
+            selected_property_name = st.selectbox(
+                "Property",
+                options=property_display_names,
+                index=0,
+                help="Select which property to pull offers for"
+            )
+            selected_property_key = property_keys[property_display_names.index(selected_property_name)]
+
     # Row 1: Offer + Refresh
     col1, col_refresh = st.columns([11, 1])
 
     with col1:
         # Load offers based on selected source
         if offers_source == "BAM API":
-            # Use BAM API
-            bam_offers = get_bam_offers()
+            # Use BAM API with selected property
+            bam_offers = get_bam_offers(property_key=selected_property_key)
             if not bam_offers:
                 st.error("No offers loaded from BAM API.")
                 st.stop()
