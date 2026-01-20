@@ -229,7 +229,9 @@ class CharlotteOddsFetcher:
             }
         """
         try:
-            odds = game['odds']['current']['spread']
+            odds = game.get('odds', {}).get('current', {}).get('spread')
+            if odds is None:
+                return None
             comparison = odds.get('comparison', {})
             
             # Get odds for specified book (fallback to default)
@@ -257,13 +259,15 @@ class CharlotteOddsFetcher:
             return None
     
     def get_moneyline_odds(
-        self, 
-        game: Dict[str, Any], 
+        self,
+        game: Dict[str, Any],
         sportsbook: str = "draftkings"
     ) -> Optional[Dict[str, Any]]:
         """Get moneyline odds for a specific sportsbook"""
         try:
-            odds = game['odds']['current']['moneyline']
+            odds = game.get('odds', {}).get('current', {}).get('moneyline')
+            if odds is None:
+                return None
             comparison = odds.get('comparison', {})
             book_odds = comparison.get(sportsbook.lower(), odds)
 
@@ -285,13 +289,15 @@ class CharlotteOddsFetcher:
             return None
     
     def get_total_odds(
-        self, 
-        game: Dict[str, Any], 
+        self,
+        game: Dict[str, Any],
         sportsbook: str = "draftkings"
     ) -> Optional[Dict[str, Any]]:
         """Get over/under total odds for a specific sportsbook"""
         try:
-            odds = game['odds']['current']['total']
+            odds = game.get('odds', {}).get('current', {}).get('total')
+            if odds is None:
+                return None
             comparison = odds.get('comparison', {})
             book_odds = comparison.get(sportsbook.lower(), odds)
 
