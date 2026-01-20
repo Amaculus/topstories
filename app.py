@@ -44,6 +44,10 @@ from src.event_fetcher import (
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Plan-Then-Write", layout="wide")
 
+# DEBUG: Force early render to check if page works at all
+import logging
+logging.info("APP START: Page config set")
+
 # ---------------- Minimal CSS ----------------
 st.markdown("""
 <style>
@@ -72,6 +76,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📝 Content Generator")
+st.write("DEBUG: Title rendered")  # DEBUG - remove later
 # Add after st.title("📝 Content Generator")
 with st.expander("🔧 Admin Tools", expanded=False):
     col1, col2 = st.columns(2)
@@ -1044,6 +1049,8 @@ with st.container():
                 st.code(traceback.format_exc())
             log_exception("Failed to fetch games")
     
+    st.write(f"DEBUG: After sport section. use_sports={ss['use_sports']}, selected_game={selected_game is not None}")  # DEBUG
+
     # Show content type indicator
     if ss["mo_launch"] and ss["use_sports"]:
         st.info("📰 Creating **Missouri Launch** article with **specific game** context")
@@ -1075,9 +1082,11 @@ bet_amount = 500
 bet_example_text = ""
 
 if ss["use_sports"] and selected_game:
+    log_debug("ODDS SECTION: Starting betting lines section")
     st.subheader("📊 Betting Lines")
 
     # Initialize odds fetcher with selected sport
+    log_debug(f"ODDS SECTION: Initializing CharlotteOddsFetcher for {sport_selected}")
     odds_fetcher = CharlotteOddsFetcher(sport=sport_selected)
 
     # Fetch odds - use different methods for weekly vs daily sports
@@ -1136,9 +1145,10 @@ if ss["use_sports"] and selected_game:
                     game = odds_fetcher.find_game_by_teams(away_name, home_name)
             
             if game:
-                log_debug(f"Matched game: {away_team} @ {home_team}")
+                log_debug(f"ODDS SECTION: Matched game: {away_team} @ {home_team}")
                 # Get selected operator from offer_row
                 selected_operator = offer_row.get("brand", "").lower()
+                log_debug(f"ODDS SECTION: Using operator: {selected_operator}")
                 
                 # Map brand names to sportsbook keys
                 operator_map = {
