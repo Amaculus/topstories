@@ -46,7 +46,16 @@ st.set_page_config(page_title="Plan-Then-Write", layout="wide")
 
 # DEBUG: Force early render to check if page works at all
 import logging
+import sys
 logging.info("APP START: Page config set")
+
+# Global exception handler to catch silent failures
+def handle_exception(exc_type, exc_value, exc_traceback):
+    logging.error(f"UNCAUGHT EXCEPTION: {exc_type.__name__}: {exc_value}")
+    import traceback
+    logging.error("".join(traceback.format_tb(exc_traceback)))
+
+sys.excepthook = handle_exception
 
 # ---------------- Minimal CSS ----------------
 st.markdown("""
@@ -76,7 +85,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📝 Content Generator")
-st.write("DEBUG: Title rendered")  # DEBUG - remove later
+logging.info("RENDER: About to render debug text")
+st.write("DEBUG: Title rendered - if you see this, basic rendering works")  # DEBUG
+logging.info("RENDER: Debug text rendered")
 # Add after st.title("📝 Content Generator")
 with st.expander("🔧 Admin Tools", expanded=False):
     col1, col2 = st.columns(2)
