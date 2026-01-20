@@ -47,6 +47,7 @@ st.set_page_config(page_title="Plan-Then-Write", layout="wide")
 # DEBUG: Force early render to check if page works at all
 import logging
 import sys
+print("[APP START] Page config set, script beginning", flush=True)
 logging.info("APP START: Page config set")
 
 # Global exception handler to catch silent failures
@@ -1099,18 +1100,23 @@ bet_amount = 500
 bet_example_text = ""
 
 if ss["use_sports"] and selected_game:
+    import sys
+    print(f"[ODDS SECTION START] sport={sport_selected}, game={selected_game.get('home_team', '?')}", flush=True)
+    sys.stdout.flush()
     log_debug("ODDS SECTION: Starting betting lines section")
-    st.write("DEBUG: About to show betting lines")  # VISIBLE DEBUG
     st.subheader("📊 Betting Lines")
 
     # Initialize odds fetcher with selected sport
+    print(f"[ODDS] Initializing fetcher for {sport_selected}", flush=True)
     log_debug(f"ODDS SECTION: Initializing CharlotteOddsFetcher for {sport_selected}")
     odds_fetcher = CharlotteOddsFetcher(sport=sport_selected)
 
     # Fetch odds - use different methods for weekly vs daily sports
     # NFL/CFB use week identifiers, NBA/MLB/NHL/CBB use dates
+    print(f"[ODDS] About to fetch odds with spinner", flush=True)
     with st.spinner(f"Loading odds ..."):
         try:
+            print(f"[ODDS] Inside spinner try block", flush=True)
             if sport_selected in ["nfl", "ncaaf"]:
                 # Weekly sports - determine week identifier
                 if sport_selected == "nfl":
@@ -1121,12 +1127,15 @@ if ss["use_sports"] and selected_game:
                         week_id = "2025-post-1"  # Bowl season
                     else:
                         week_id = "2025-reg-14"  # Regular season
+                print(f"[ODDS] Fetching weekly odds: {week_id}", flush=True)
                 log_debug(f"Fetching odds for {sport_selected} week {week_id}")
                 odds_fetcher.fetch_week_odds(week_id)
             else:
                 # Daily sports (NBA, MLB, NHL, CBB) - use date
+                print(f"[ODDS] Fetching daily odds for date: {target_datetime}", flush=True)
                 log_debug(f"Fetching odds for {sport_selected} date {target_datetime.date() if target_datetime else 'today'}")
                 odds_fetcher.fetch_date_odds(target_datetime)
+            print(f"[ODDS] Charlotte returned {len(odds_fetcher.games_cache)} games", flush=True)
             log_debug(f"Charlotte returned {len(odds_fetcher.games_cache)} games")
             
             # Find game by team names
@@ -1185,109 +1194,133 @@ if ss["use_sports"] and selected_game:
                 
                 # Get all odds for this game
                 game_odds = odds_fetcher.get_all_odds_for_game(game, sportsbook_key)
-                log_debug(
-                    "ODDS SECTION: Odds text spread=%s ml=%s total=%s",
-                    game_odds.get("spread"),
-                    game_odds.get("moneyline"),
-                    game_odds.get("total"),
-                )
-                
+                log_debug(f"ODDS SECTION: Odds text spread={game_odds.get('spread')} ml={game_odds.get('moneyline')} total={game_odds.get('total')}")
+
                 # Display odds in a nice format
-                col_odds1, col_odds2 = st.columns(2)
-                
-                with col_odds1:
-                    st.write("**Spread**")
-                    st.caption(game_odds['spread'])
-                    
-                    st.write("**Moneyline**")
-                    st.caption(game_odds['moneyline'])
-                
-                with col_odds2:
-                    st.write("**Total (Over/Under)**")
-                    st.caption(game_odds['total'])
-                
+                try:
+                    log_debug("ODDS SECTION: About to create columns for odds display")
+                    col_odds1, col_odds2 = st.columns(2)
+
+                    with col_odds1:
+                        st.write("**Spread**")
+                        st.caption(str(game_odds.get('spread', 'N/A')))
+
+                        st.write("**Moneyline**")
+                        st.caption(str(game_odds.get('moneyline', 'N/A')))
+
+                    with col_odds2:
+                        st.write("**Total (Over/Under)**")
+                        st.caption(str(game_odds.get('total', 'N/A')))
+                    log_debug("ODDS SECTION: Finished displaying odds columns")
+                except Exception as e:
+                    log_debug(f"ODDS SECTION: Error displaying odds columns: {e}")
+                    logging.exception("Error in odds column display")
+
                 # Build bet options for dropdown
-                spread_raw = game_odds['spread_raw']
-                ml_raw = game_odds['moneyline_raw']
-                total_raw = game_odds['total_raw']
-                
+                spread_raw = game_odds.get('spread_raw')
+                ml_raw = game_odds.get('moneyline_raw')
+                total_raw = game_odds.get('total_raw')
+
+                log_debug(f"ODDS SECTION: spread_raw={spread_raw is not None}, ml_raw={ml_raw is not None}, total_raw={total_raw is not None}")
+
                 bet_options = []
-                
-                if spread_raw:
-                    # Away spread
-                    if spread_raw['favorite'] == 'home':
+
+                # Helper to safely format odds
+                def fmt_odds(val):
+                    try:
+                        return f"{int(val):+d}"
+                    except (TypeError, ValueError):
+                        return str(val) if val is not None else "N/A"
+
+                try:
+                    if spread_raw:
+                        log_debug(f"ODDS SECTION: Building spread options, favorite={spread_raw.get('favorite')}")
+                        # Away spread
+                        if spread_raw.get('favorite') == 'home':
+                            bet_options.append({
+                                'label': f"{spread_raw['away_team']} +{spread_raw['line']} ({fmt_odds(spread_raw['away_odds'])})",
+                                'odds': spread_raw['away_odds'],
+                                'type': 'spread',
+                                'selection': f"{spread_raw['away_team']} +{spread_raw['line']}"
+                            })
+                            bet_options.append({
+                                'label': f"{spread_raw['home_team']} -{spread_raw['line']} ({fmt_odds(spread_raw['home_odds'])})",
+                                'odds': spread_raw['home_odds'],
+                                'type': 'spread',
+                                'selection': f"{spread_raw['home_team']} -{spread_raw['line']}"
+                            })
+                        else:
+                            bet_options.append({
+                                'label': f"{spread_raw['away_team']} -{spread_raw['line']} ({fmt_odds(spread_raw['away_odds'])})",
+                                'odds': spread_raw['away_odds'],
+                                'type': 'spread',
+                                'selection': f"{spread_raw['away_team']} -{spread_raw['line']}"
+                            })
+                            bet_options.append({
+                                'label': f"{spread_raw['home_team']} +{spread_raw['line']} ({fmt_odds(spread_raw['home_odds'])})",
+                                'odds': spread_raw['home_odds'],
+                                'type': 'spread',
+                                'selection': f"{spread_raw['home_team']} +{spread_raw['line']}"
+                            })
+
+                    if ml_raw:
+                        log_debug("ODDS SECTION: Building moneyline options")
                         bet_options.append({
-                            'label': f"{spread_raw['away_team']} +{spread_raw['line']} ({spread_raw['away_odds']:+d})",
-                            'odds': spread_raw['away_odds'],
-                            'type': 'spread',
-                            'selection': f"{spread_raw['away_team']} +{spread_raw['line']}"
+                            'label': f"{ml_raw['away_team']} Moneyline ({fmt_odds(ml_raw['away_odds'])})",
+                            'odds': ml_raw['away_odds'],
+                            'type': 'moneyline',
+                            'selection': f"{ml_raw['away_team']} moneyline"
                         })
                         bet_options.append({
-                            'label': f"{spread_raw['home_team']} -{spread_raw['line']} ({spread_raw['home_odds']:+d})",
-                            'odds': spread_raw['home_odds'],
-                            'type': 'spread',
-                            'selection': f"{spread_raw['home_team']} -{spread_raw['line']}"
+                            'label': f"{ml_raw['home_team']} Moneyline ({fmt_odds(ml_raw['home_odds'])})",
+                            'odds': ml_raw['home_odds'],
+                            'type': 'moneyline',
+                            'selection': f"{ml_raw['home_team']} moneyline"
                         })
-                    else:
+
+                    if total_raw:
+                        log_debug("ODDS SECTION: Building total options")
                         bet_options.append({
-                            'label': f"{spread_raw['away_team']} -{spread_raw['line']} ({spread_raw['away_odds']:+d})",
-                            'odds': spread_raw['away_odds'],
-                            'type': 'spread',
-                            'selection': f"{spread_raw['away_team']} -{spread_raw['line']}"
+                            'label': f"Over {total_raw['line']} ({fmt_odds(total_raw['over_odds'])})",
+                            'odds': total_raw['over_odds'],
+                            'type': 'total',
+                            'selection': f"Over {total_raw['line']}"
                         })
                         bet_options.append({
-                            'label': f"{spread_raw['home_team']} +{spread_raw['line']} ({spread_raw['home_odds']:+d})",
-                            'odds': spread_raw['home_odds'],
-                            'type': 'spread',
-                            'selection': f"{spread_raw['home_team']} +{spread_raw['line']}"
+                            'label': f"Under {total_raw['line']} ({fmt_odds(total_raw['under_odds'])})",
+                            'odds': total_raw['under_odds'],
+                            'type': 'total',
+                            'selection': f"Under {total_raw['line']}"
                         })
-                
-                if ml_raw:
-                    bet_options.append({
-                        'label': f"{ml_raw['away_team']} Moneyline ({ml_raw['away_odds']:+d})",
-                        'odds': ml_raw['away_odds'],
-                        'type': 'moneyline',
-                        'selection': f"{ml_raw['away_team']} moneyline"
-                    })
-                    bet_options.append({
-                        'label': f"{ml_raw['home_team']} Moneyline ({ml_raw['home_odds']:+d})",
-                        'odds': ml_raw['home_odds'],
-                        'type': 'moneyline',
-                        'selection': f"{ml_raw['home_team']} moneyline"
-                    })
-                
-                if total_raw:
-                    bet_options.append({
-                        'label': f"Over {total_raw['line']} ({total_raw['over_odds']:+d})",
-                        'odds': total_raw['over_odds'],
-                        'type': 'total',
-                        'selection': f"Over {total_raw['line']}"
-                    })
-                    bet_options.append({
-                        'label': f"Under {total_raw['line']} ({total_raw['under_odds']:+d})",
-                        'odds': total_raw['under_odds'],
-                        'type': 'total',
-                        'selection': f"Under {total_raw['line']}"
-                    })
-                log_debug(f"ODDS SECTION: Built {len(bet_options)} bet options")
+                    log_debug(f"ODDS SECTION: Built {len(bet_options)} bet options successfully")
+                except Exception as e:
+                    log_debug(f"ODDS SECTION: Error building bet options: {e}")
+                    logging.exception("Error building bet options")
 
                 if not bet_options:
+                    print(f"[ODDS] No bet options available", flush=True)
                     log_debug("ODDS SECTION: No bettable lines available for this game.")
                     st.warning("No bettable lines available for this game yet.")
                 else:
+                    print(f"[ODDS] Rendering bet example builder with {len(bet_options)} options", flush=True)
                     log_debug("ODDS SECTION: Rendering bet example builder.")
                     st.divider()
+                    print(f"[ODDS] After divider", flush=True)
                     st.subheader("🎯 Betting Example Builder")
-                    
+                    print(f"[ODDS] After subheader", flush=True)
+
                     col_bet, col_amount = st.columns([3, 1])
-                    
+                    print(f"[ODDS] After columns creation", flush=True)
+
                     with col_bet:
+                        print(f"[ODDS] About to create bet selectbox", flush=True)
                         bet_idx = st.selectbox(
                             "Select bet for example",
                             options=list(range(len(bet_options))),
                             format_func=lambda i: bet_options[i]['label'],
                             help="This bet will be used in the 'How to Claim' section example"
                         )
+                        print(f"[ODDS] Selectbox created, bet_idx={bet_idx}", flush=True)
                         selected_bet = bet_options[bet_idx]
                         log_debug(f"ODDS SECTION: Selected bet index {bet_idx}")
                     
@@ -1302,13 +1335,20 @@ if ss["use_sports"] and selected_game:
                         )
                     
                     # Calculate profit
-                    odds = selected_bet['odds']
-                    if odds > 0:
-                        # Positive odds: profit = (stake × odds) / 100
-                        profit = (bet_amount * odds) / 100
-                    else:
-                        # Negative odds: profit = (stake × 100) / |odds|
-                        profit = (bet_amount * 100) / abs(odds)
+                    odds = selected_bet.get('odds')
+                    log_debug(f"ODDS SECTION: Calculating profit with odds={odds}, amount={bet_amount}")
+                    try:
+                        if odds is None:
+                            profit = 0
+                        elif odds > 0:
+                            # Positive odds: profit = (stake × odds) / 100
+                            profit = (bet_amount * odds) / 100
+                        else:
+                            # Negative odds: profit = (stake × 100) / |odds|
+                            profit = (bet_amount * 100) / abs(odds)
+                    except (TypeError, ZeroDivisionError) as e:
+                        log_debug(f"ODDS SECTION: Error calculating profit: {e}")
+                        profit = 0
                     
                     profit = round(profit, 2)
                     
@@ -1350,11 +1390,13 @@ if ss["use_sports"] and selected_game:
                 log_debug(f"No odds match for {away_team} @ {home_team}. Sample: {sample_games}")
 
         except Exception as e:
+            print(f"[ODDS] EXCEPTION: {e}", flush=True)
             st.error(f"Failed to load odds: {e}")
             import traceback
             if DEBUG_ENABLED:
                 st.code(traceback.format_exc())
             log_exception("Failed to load odds")
+    print(f"[ODDS SECTION END] Completed odds section", flush=True)
 
 # Generate Outline button
 if st.button("Generate Outline", type="primary"):
