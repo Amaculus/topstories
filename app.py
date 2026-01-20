@@ -1044,13 +1044,15 @@ with st.container():
                 logging.info(f"GAME_SELECT: First option: {game_options[0] if game_options else 'NONE'}")
 
                 logging.info("GAME_SELECT: About to render selectbox")
-                selected_idx = st.selectbox(
+                # Use options directly instead of lambda to avoid Python 3.13 serialization issues
+                selected_game_label = st.selectbox(
                     f"Game ({len(games)} available)",
-                    options=list(range(len(games))),
-                    format_func=lambda i: game_options[i],
+                    options=game_options,
                     index=default_idx
                 )
-                logging.info(f"GAME_SELECT: Selectbox rendered, idx={selected_idx}")
+                logging.info(f"GAME_SELECT: Selectbox rendered, label={selected_game_label}")
+                # Find the game by the selected label
+                selected_idx = game_options.index(selected_game_label) if selected_game_label in game_options else 0
                 selected_game = games[selected_idx]
                 logging.info(f"GAME_SELECT: Selected game set")
                 event_context = format_event_for_prompt(selected_game, target_datetime)
@@ -1312,15 +1314,20 @@ if ss["use_sports"] and selected_game:
                     col_bet, col_amount = st.columns([3, 1])
                     print(f"[ODDS] After columns creation", flush=True)
 
+                    # Pre-compute labels to avoid lambda serialization issues
+                    bet_labels = [opt['label'] for opt in bet_options]
+                    print(f"[ODDS] Bet labels: {bet_labels}", flush=True)
+
                     with col_bet:
                         print(f"[ODDS] About to create bet selectbox", flush=True)
-                        bet_idx = st.selectbox(
+                        selected_label = st.selectbox(
                             "Select bet for example",
-                            options=list(range(len(bet_options))),
-                            format_func=lambda i: bet_options[i]['label'],
+                            options=bet_labels,
                             help="This bet will be used in the 'How to Claim' section example"
                         )
-                        print(f"[ODDS] Selectbox created, bet_idx={bet_idx}", flush=True)
+                        print(f"[ODDS] Selectbox created, selected_label={selected_label}", flush=True)
+                        # Find the selected bet by label
+                        bet_idx = bet_labels.index(selected_label) if selected_label in bet_labels else 0
                         selected_bet = bet_options[bet_idx]
                         log_debug(f"ODDS SECTION: Selected bet index {bet_idx}")
                     
@@ -1570,3 +1577,5 @@ with col_dl:
     
     st.download_button("📥 Export", data=data, file_name=f"{export_name or 'article'}{ext}",
                        disabled=not content, use_container_width=True)
+
+print("[SCRIPT END] Entire script completed successfully", flush=True)
