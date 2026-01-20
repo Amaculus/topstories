@@ -117,6 +117,18 @@ init_state()
 ss = st.session_state
 
 # ---------------- Helpers ----------------
+def _is_debug_enabled() -> bool:
+    val = os.getenv("DEBUG")
+    if val is None:
+        try:
+            val = st.secrets.get("DEBUG")
+            if val is None:
+                val = st.secrets.get("debug")
+        except Exception:
+            val = None
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
+DEBUG_ENABLED = _is_debug_enabled()
 
 def get_alternative_offers(offers_df: pd.DataFrame, main_offer_row: dict) -> list[dict]:
     """Find other offers from the same brand as the main offer."""
@@ -757,7 +769,7 @@ def generate_article_from_tokens(tokens: list[dict], title: str, offer_row: dict
 
     # Validate article facts
     validation_errors = validate_article_facts(full_article, offer_row, keyword)
-    if validation_errors and os.getenv("DEBUG"):
+    if validation_errors and DEBUG_ENABLED:
         st.warning("⚠️ Validation Issues Found:")
         for error in validation_errors:
             st.write(error)
@@ -982,12 +994,16 @@ with st.container():
         try:
             games = get_games_for_date(sport_selected, target_datetime)
             if games:
+                if DEBUG_ENABLED:
+                    st.caption(f"ESPN returned {len(games)} {sport_label} games for {target_date.isoformat()}")
                 prime = filter_prime_time_games(games)
                 default_game = prime[0] if prime else games[0]
                 default_idx = games.index(default_game) if default_game in games else 0
                 
                 # Game selector
                 game_options = [format_game_for_dropdown(g) for g in games]
+                if DEBUG_ENABLED:
+                    st.caption("Sample games: " + " | ".join(game_options[:3]))
                 selected_idx = st.selectbox(
                     f"Game ({len(games)} available)",
                     options=list(range(len(games))),
@@ -1003,6 +1019,9 @@ with st.container():
                 st.info(f"ℹ️ No {sport_label} games on {target_date.strftime('%A, %b %d')}")
         except Exception as e:
             st.warning(f"⚠️ Could not fetch games: {e}")
+            if DEBUG_ENABLED:
+                import traceback
+                st.code(traceback.format_exc())
     
     # Show content type indicator
     if ss["mo_launch"] and ss["use_sports"]:
@@ -1250,19 +1269,19 @@ if ss["use_sports"] and selected_game:
             else:
                 st.warning(f"⚠️ Odds not available for {away_team} @ {home_team}")
                 # Show debug info
-                if os.getenv("DEBUG") and odds_fetcher.games_cache:
+                if DEBUG_ENABLED and odds_fetcher.games_cache:
                     st.caption(f"Available games ({len(odds_fetcher.games_cache)}):")
                     for g in odds_fetcher.games_cache[:5]:
                         away_info = g.get('away', {})
                         home_info = g.get('home', {})
                         st.caption(f"  {away_info.get('key', '?')} {away_info.get('mascot', '?')} @ {home_info.get('key', '?')} {home_info.get('mascot', '?')}")
-                elif not odds_fetcher.games_cache:
+                elif DEBUG_ENABLED and not odds_fetcher.games_cache:
                     st.caption(f"No games found in Charlotte API for {sport_selected.upper()}")
 
         except Exception as e:
             st.error(f"Failed to load odds: {e}")
             import traceback
-            if os.getenv("DEBUG"):
+            if DEBUG_ENABLED:
                 st.code(traceback.format_exc())
 
 # Generate Outline button
