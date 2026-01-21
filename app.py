@@ -1179,6 +1179,9 @@ if ss["use_sports"] and selected_game:
                 odds_keys = list(game.get('odds', {}).keys()) if game.get('odds') else []
                 current_keys = list(game.get('odds', {}).get('current', {}).keys()) if game.get('odds', {}).get('current') else []
                 print(f"[ODDS] Game odds structure: odds_keys={odds_keys}, current_keys={current_keys}", flush=True)
+                # Log actual spread data to see why it might be unavailable
+                spread_data = game.get('odds', {}).get('current', {}).get('spread', {})
+                print(f"[ODDS] Spread data: value={spread_data.get('value')}, away={spread_data.get('away')}, home={spread_data.get('home')}, favorite={spread_data.get('favorite')}", flush=True)
 
                 # Get selected operator from offer_row
                 selected_operator = offer_row.get("brand", "")
