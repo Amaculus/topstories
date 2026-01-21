@@ -44,20 +44,6 @@ from src.event_fetcher import (
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Plan-Then-Write", layout="wide")
 
-# DEBUG: Force early render to check if page works at all
-import logging
-import sys
-print("[APP START] Page config set, script beginning", flush=True)
-logging.info("APP START: Page config set")
-
-# Global exception handler to catch silent failures
-def handle_exception(exc_type, exc_value, exc_traceback):
-    logging.error(f"UNCAUGHT EXCEPTION: {exc_type.__name__}: {exc_value}")
-    import traceback
-    logging.error("".join(traceback.format_tb(exc_traceback)))
-
-sys.excepthook = handle_exception
-
 # ---------------- Minimal CSS ----------------
 st.markdown("""
 <style>
@@ -86,10 +72,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📝 Content Generator")
-logging.info("RENDER: About to render debug text")
-st.write("DEBUG: Title rendered - if you see this, basic rendering works")  # DEBUG
-logging.info("RENDER: Debug text rendered")
-# Add after st.title("📝 Content Generator")
+
 with st.expander("🔧 Admin Tools", expanded=False):
     col1, col2 = st.columns(2)
     
@@ -1027,36 +1010,24 @@ with st.container():
         target_datetime = datetime.combine(target_date, datetime.min.time()).replace(tzinfo=ZoneInfo("America/New_York"))
         
         try:
-            logging.info(f"GAME_SELECT: Fetching games for {sport_selected}")
             games = get_games_for_date(sport_selected, target_datetime)
             if games:
-                logging.info(f"GAME_SELECT: Got {len(games)} games")
-
-                logging.info("GAME_SELECT: About to filter prime time")
                 prime = filter_prime_time_games(games)
                 default_game = prime[0] if prime else games[0]
                 default_idx = games.index(default_game) if default_game in games else 0
-                logging.info(f"GAME_SELECT: default_idx={default_idx}")
 
-                logging.info("GAME_SELECT: About to create game_options")
                 game_options = [format_game_for_dropdown(g) for g in games]
-                logging.info(f"GAME_SELECT: Created {len(game_options)} options")
-                logging.info(f"GAME_SELECT: First option: {game_options[0] if game_options else 'NONE'}")
 
-                logging.info("GAME_SELECT: About to render selectbox")
                 # Use options directly instead of lambda to avoid Python 3.13 serialization issues
                 selected_game_label = st.selectbox(
                     f"Game ({len(games)} available)",
                     options=game_options,
                     index=default_idx
                 )
-                logging.info(f"GAME_SELECT: Selectbox rendered, label={selected_game_label}")
                 # Find the game by the selected label
                 selected_idx = game_options.index(selected_game_label) if selected_game_label in game_options else 0
                 selected_game = games[selected_idx]
-                logging.info(f"GAME_SELECT: Selected game set")
                 event_context = format_event_for_prompt(selected_game, target_datetime)
-                logging.info(f"GAME_SELECT: event_context created")
                 
                 is_prime = selected_game in prime if prime else False
                 st.caption(f"📅 {event_context} {'⭐' if is_prime else ''}")
@@ -1068,8 +1039,6 @@ with st.container():
                 import traceback
                 st.code(traceback.format_exc())
             log_exception("Failed to fetch games")
-    
-    st.write(f"DEBUG: After sport section. use_sports={ss['use_sports']}, selected_game={selected_game is not None}")  # DEBUG
 
     # Show content type indicator
     if ss["mo_launch"] and ss["use_sports"]:
@@ -1102,23 +1071,15 @@ bet_amount = 500
 bet_example_text = ""
 
 if ss["use_sports"] and selected_game:
-    import sys
-    print(f"[ODDS SECTION START] sport={sport_selected}, game={selected_game.get('home_team', '?')}", flush=True)
-    sys.stdout.flush()
-    log_debug("ODDS SECTION: Starting betting lines section")
     st.subheader("📊 Betting Lines")
 
     # Initialize odds fetcher with selected sport
-    print(f"[ODDS] Initializing fetcher for {sport_selected}", flush=True)
-    log_debug(f"ODDS SECTION: Initializing CharlotteOddsFetcher for {sport_selected}")
     odds_fetcher = CharlotteOddsFetcher(sport=sport_selected)
 
     # Fetch odds - use different methods for weekly vs daily sports
     # NFL/CFB use week identifiers, NBA/MLB/NHL/CBB use dates
-    print(f"[ODDS] About to fetch odds with spinner", flush=True)
     with st.spinner(f"Loading odds ..."):
         try:
-            print(f"[ODDS] Inside spinner try block", flush=True)
             if sport_selected in ["nfl", "ncaaf"]:
                 # Weekly sports - determine week identifier
                 if sport_selected == "nfl":
@@ -1129,16 +1090,10 @@ if ss["use_sports"] and selected_game:
                         week_id = "2025-post-1"  # Bowl season
                     else:
                         week_id = "2025-reg-14"  # Regular season
-                print(f"[ODDS] Fetching weekly odds: {week_id}", flush=True)
-                log_debug(f"Fetching odds for {sport_selected} week {week_id}")
                 odds_fetcher.fetch_week_odds(week_id)
             else:
                 # Daily sports (NBA, MLB, NHL, CBB) - use date
-                print(f"[ODDS] Fetching daily odds for date: {target_datetime}", flush=True)
-                log_debug(f"Fetching odds for {sport_selected} date {target_datetime.date() if target_datetime else 'today'}")
                 odds_fetcher.fetch_date_odds(target_datetime)
-            print(f"[ODDS] Charlotte returned {len(odds_fetcher.games_cache)} games", flush=True)
-            log_debug(f"Charlotte returned {len(odds_fetcher.games_cache)} games")
             
             # Find game by team names
             away_team = selected_game.get("away_team", "")
@@ -1174,19 +1129,9 @@ if ss["use_sports"] and selected_game:
                     game = odds_fetcher.find_game_by_teams(away_name, home_name)
             
             if game:
-                log_debug(f"ODDS SECTION: Matched game: {away_team} @ {home_team}")
-                # Log game structure to debug missing odds
-                odds_keys = list(game.get('odds', {}).keys()) if game.get('odds') else []
-                current_keys = list(game.get('odds', {}).get('current', {}).keys()) if game.get('odds', {}).get('current') else []
-                print(f"[ODDS] Game odds structure: odds_keys={odds_keys}, current_keys={current_keys}", flush=True)
-                # Log actual spread data to see why it might be unavailable
-                spread_data = game.get('odds', {}).get('current', {}).get('spread', {})
-                print(f"[ODDS] Spread data: value={spread_data.get('value')}, away={spread_data.get('away')}, home={spread_data.get('home')}, favorite={spread_data.get('favorite')}", flush=True)
-
                 # Get selected operator from offer_row
                 selected_operator = offer_row.get("brand", "")
                 selected_operator = selected_operator.lower() if isinstance(selected_operator, str) else ""
-                log_debug(f"ODDS SECTION: Using operator: {selected_operator}")
 
                 # Map brand names to sportsbook keys
                 operator_map = {
@@ -1200,44 +1145,33 @@ if ss["use_sports"] and selected_game:
                 }
 
                 sportsbook_key = operator_map.get(selected_operator, "draftkings")
-                log_debug(f"ODDS SECTION: Book key: {sportsbook_key}")
 
                 # Get all odds for this game
                 game_odds = odds_fetcher.get_all_odds_for_game(game, sportsbook_key)
 
                 # If no odds from primary book, try draftkings as fallback
                 if not game_odds.get('spread_raw') and sportsbook_key != "draftkings":
-                    print(f"[ODDS] No odds from {sportsbook_key}, trying draftkings fallback", flush=True)
                     game_odds = odds_fetcher.get_all_odds_for_game(game, "draftkings")
                     sportsbook_key = "draftkings"
-                log_debug(f"ODDS SECTION: Odds text spread={game_odds.get('spread')} ml={game_odds.get('moneyline')} total={game_odds.get('total')}")
 
                 # Display odds in a nice format
-                try:
-                    log_debug("ODDS SECTION: About to create columns for odds display")
-                    col_odds1, col_odds2 = st.columns(2)
+                col_odds1, col_odds2 = st.columns(2)
 
-                    with col_odds1:
-                        st.write("**Spread**")
-                        st.caption(str(game_odds.get('spread', 'N/A')))
+                with col_odds1:
+                    st.write("**Spread**")
+                    st.caption(str(game_odds.get('spread', 'N/A')))
 
-                        st.write("**Moneyline**")
-                        st.caption(str(game_odds.get('moneyline', 'N/A')))
+                    st.write("**Moneyline**")
+                    st.caption(str(game_odds.get('moneyline', 'N/A')))
 
-                    with col_odds2:
-                        st.write("**Total (Over/Under)**")
-                        st.caption(str(game_odds.get('total', 'N/A')))
-                    log_debug("ODDS SECTION: Finished displaying odds columns")
-                except Exception as e:
-                    log_debug(f"ODDS SECTION: Error displaying odds columns: {e}")
-                    logging.exception("Error in odds column display")
+                with col_odds2:
+                    st.write("**Total (Over/Under)**")
+                    st.caption(str(game_odds.get('total', 'N/A')))
 
                 # Build bet options for dropdown
                 spread_raw = game_odds.get('spread_raw')
                 ml_raw = game_odds.get('moneyline_raw')
                 total_raw = game_odds.get('total_raw')
-
-                log_debug(f"ODDS SECTION: spread_raw={spread_raw is not None}, ml_raw={ml_raw is not None}, total_raw={total_raw is not None}")
 
                 bet_options = []
 
@@ -1248,103 +1182,80 @@ if ss["use_sports"] and selected_game:
                     except (TypeError, ValueError):
                         return str(val) if val is not None else "N/A"
 
-                try:
-                    if spread_raw:
-                        log_debug(f"ODDS SECTION: Building spread options, favorite={spread_raw.get('favorite')}")
-                        # Away spread
-                        if spread_raw.get('favorite') == 'home':
-                            bet_options.append({
-                                'label': f"{spread_raw['away_team']} +{spread_raw['line']} ({fmt_odds(spread_raw['away_odds'])})",
-                                'odds': spread_raw['away_odds'],
-                                'type': 'spread',
-                                'selection': f"{spread_raw['away_team']} +{spread_raw['line']}"
-                            })
-                            bet_options.append({
-                                'label': f"{spread_raw['home_team']} -{spread_raw['line']} ({fmt_odds(spread_raw['home_odds'])})",
-                                'odds': spread_raw['home_odds'],
-                                'type': 'spread',
-                                'selection': f"{spread_raw['home_team']} -{spread_raw['line']}"
-                            })
-                        else:
-                            bet_options.append({
-                                'label': f"{spread_raw['away_team']} -{spread_raw['line']} ({fmt_odds(spread_raw['away_odds'])})",
-                                'odds': spread_raw['away_odds'],
-                                'type': 'spread',
-                                'selection': f"{spread_raw['away_team']} -{spread_raw['line']}"
-                            })
-                            bet_options.append({
-                                'label': f"{spread_raw['home_team']} +{spread_raw['line']} ({fmt_odds(spread_raw['home_odds'])})",
-                                'odds': spread_raw['home_odds'],
-                                'type': 'spread',
-                                'selection': f"{spread_raw['home_team']} +{spread_raw['line']}"
-                            })
-
-                    if ml_raw:
-                        log_debug("ODDS SECTION: Building moneyline options")
+                if spread_raw:
+                    if spread_raw.get('favorite') == 'home':
                         bet_options.append({
-                            'label': f"{ml_raw['away_team']} Moneyline ({fmt_odds(ml_raw['away_odds'])})",
-                            'odds': ml_raw['away_odds'],
-                            'type': 'moneyline',
-                            'selection': f"{ml_raw['away_team']} moneyline"
+                            'label': f"{spread_raw['away_team']} +{spread_raw['line']} ({fmt_odds(spread_raw['away_odds'])})",
+                            'odds': spread_raw['away_odds'],
+                            'type': 'spread',
+                            'selection': f"{spread_raw['away_team']} +{spread_raw['line']}"
                         })
                         bet_options.append({
-                            'label': f"{ml_raw['home_team']} Moneyline ({fmt_odds(ml_raw['home_odds'])})",
-                            'odds': ml_raw['home_odds'],
-                            'type': 'moneyline',
-                            'selection': f"{ml_raw['home_team']} moneyline"
+                            'label': f"{spread_raw['home_team']} -{spread_raw['line']} ({fmt_odds(spread_raw['home_odds'])})",
+                            'odds': spread_raw['home_odds'],
+                            'type': 'spread',
+                            'selection': f"{spread_raw['home_team']} -{spread_raw['line']}"
+                        })
+                    else:
+                        bet_options.append({
+                            'label': f"{spread_raw['away_team']} -{spread_raw['line']} ({fmt_odds(spread_raw['away_odds'])})",
+                            'odds': spread_raw['away_odds'],
+                            'type': 'spread',
+                            'selection': f"{spread_raw['away_team']} -{spread_raw['line']}"
+                        })
+                        bet_options.append({
+                            'label': f"{spread_raw['home_team']} +{spread_raw['line']} ({fmt_odds(spread_raw['home_odds'])})",
+                            'odds': spread_raw['home_odds'],
+                            'type': 'spread',
+                            'selection': f"{spread_raw['home_team']} +{spread_raw['line']}"
                         })
 
-                    if total_raw:
-                        log_debug("ODDS SECTION: Building total options")
-                        bet_options.append({
-                            'label': f"Over {total_raw['line']} ({fmt_odds(total_raw['over_odds'])})",
-                            'odds': total_raw['over_odds'],
-                            'type': 'total',
-                            'selection': f"Over {total_raw['line']}"
-                        })
-                        bet_options.append({
-                            'label': f"Under {total_raw['line']} ({fmt_odds(total_raw['under_odds'])})",
-                            'odds': total_raw['under_odds'],
-                            'type': 'total',
-                            'selection': f"Under {total_raw['line']}"
-                        })
-                    log_debug(f"ODDS SECTION: Built {len(bet_options)} bet options successfully")
-                except Exception as e:
-                    log_debug(f"ODDS SECTION: Error building bet options: {e}")
-                    logging.exception("Error building bet options")
+                if ml_raw:
+                    bet_options.append({
+                        'label': f"{ml_raw['away_team']} Moneyline ({fmt_odds(ml_raw['away_odds'])})",
+                        'odds': ml_raw['away_odds'],
+                        'type': 'moneyline',
+                        'selection': f"{ml_raw['away_team']} moneyline"
+                    })
+                    bet_options.append({
+                        'label': f"{ml_raw['home_team']} Moneyline ({fmt_odds(ml_raw['home_odds'])})",
+                        'odds': ml_raw['home_odds'],
+                        'type': 'moneyline',
+                        'selection': f"{ml_raw['home_team']} moneyline"
+                    })
+
+                if total_raw:
+                    bet_options.append({
+                        'label': f"Over {total_raw['line']} ({fmt_odds(total_raw['over_odds'])})",
+                        'odds': total_raw['over_odds'],
+                        'type': 'total',
+                        'selection': f"Over {total_raw['line']}"
+                    })
+                    bet_options.append({
+                        'label': f"Under {total_raw['line']} ({fmt_odds(total_raw['under_odds'])})",
+                        'odds': total_raw['under_odds'],
+                        'type': 'total',
+                        'selection': f"Under {total_raw['line']}"
+                    })
 
                 if not bet_options:
-                    print(f"[ODDS] No bet options available", flush=True)
-                    log_debug("ODDS SECTION: No bettable lines available for this game.")
                     st.warning("No bettable lines available for this game yet.")
                 else:
-                    print(f"[ODDS] Rendering bet example builder with {len(bet_options)} options", flush=True)
-                    log_debug("ODDS SECTION: Rendering bet example builder.")
                     st.divider()
-                    print(f"[ODDS] After divider", flush=True)
                     st.subheader("🎯 Betting Example Builder")
-                    print(f"[ODDS] After subheader", flush=True)
 
                     col_bet, col_amount = st.columns([3, 1])
-                    print(f"[ODDS] After columns creation", flush=True)
-
-                    # Pre-compute labels to avoid lambda serialization issues
                     bet_labels = [opt['label'] for opt in bet_options]
-                    print(f"[ODDS] Bet labels: {bet_labels}", flush=True)
 
                     with col_bet:
-                        print(f"[ODDS] About to create bet selectbox", flush=True)
                         selected_label = st.selectbox(
                             "Select bet for example",
                             options=bet_labels,
                             help="This bet will be used in the 'How to Claim' section example"
                         )
-                        print(f"[ODDS] Selectbox created, selected_label={selected_label}", flush=True)
-                        # Find the selected bet by label
                         bet_idx = bet_labels.index(selected_label) if selected_label in bet_labels else 0
                         selected_bet = bet_options[bet_idx]
-                        log_debug(f"ODDS SECTION: Selected bet index {bet_idx}")
-                    
+
                     with col_amount:
                         bet_amount = st.number_input(
                             "Bet amount",
@@ -1354,70 +1265,47 @@ if ss["use_sports"] and selected_game:
                             step=50,
                             help="Amount for the example bet"
                         )
-                    
+
                     # Calculate profit
                     odds = selected_bet.get('odds')
-                    log_debug(f"ODDS SECTION: Calculating profit with odds={odds}, amount={bet_amount}")
                     try:
                         if odds is None:
                             profit = 0
                         elif odds > 0:
-                            # Positive odds: profit = (stake × odds) / 100
                             profit = (bet_amount * odds) / 100
                         else:
-                            # Negative odds: profit = (stake × 100) / |odds|
                             profit = (bet_amount * 100) / abs(odds)
-                    except (TypeError, ZeroDivisionError) as e:
-                        log_debug(f"ODDS SECTION: Error calculating profit: {e}")
+                    except (TypeError, ZeroDivisionError):
                         profit = 0
-                    
+
                     profit = round(profit, 2)
-                    
-                    # Show preview
+
                     st.info(
                         f"**Example Preview:**\n\n"
                         f"Bet: ${bet_amount} on {selected_bet['selection']}\n\n"
                         f"✅ **If it wins:** ${profit:.2f} profit + ${bet_amount} stake back = **${profit + bet_amount:.2f} total**"
                     )
-                    
-                    # Build example text for prompts
+
                     operator_name = odds_fetcher.SPORTSBOOK_NAMES.get(sportsbook_key, sportsbook_key.title())
-                    
+
                     bet_example_text = (
                         f"Suppose I place a ${bet_amount} first bet on the {selected_bet['selection']} "
                         f"in {event_context}:\n"
                         f"* If the bet wins, I receive ${profit:.2f} in profit and my ${bet_amount} stake back.\n"
                         f"* If the bet loses, [writer adds bonus bet details from terms]"
                     )
-                    
+
                     st.success("✅ Betting example ready - will be added to 'How to Claim' section")
-                
+
             else:
                 st.warning(f"⚠️ Odds not available for {away_team} @ {home_team}")
-                # Show debug info
-                if DEBUG_ENABLED and odds_fetcher.games_cache:
-                    st.caption(f"Available games ({len(odds_fetcher.games_cache)}):")
-                    for g in odds_fetcher.games_cache[:5]:
-                        away_info = g.get('away', {})
-                        home_info = g.get('home', {})
-                        st.caption(f"  {away_info.get('key', '?')} {away_info.get('mascot', '?')} @ {home_info.get('key', '?')} {home_info.get('mascot', '?')}")
-                elif DEBUG_ENABLED and not odds_fetcher.games_cache:
-                    st.caption(f"No games found in Charlotte API for {sport_selected.upper()}")
-                sample_games = []
-                for g in odds_fetcher.games_cache[:5]:
-                    away_info = g.get('away', {})
-                    home_info = g.get('home', {})
-                    sample_games.append(f"{away_info.get('key', '?')} {away_info.get('mascot', '?')} @ {home_info.get('key', '?')} {home_info.get('mascot', '?')}")
-                log_debug(f"No odds match for {away_team} @ {home_team}. Sample: {sample_games}")
 
         except Exception as e:
-            print(f"[ODDS] EXCEPTION: {e}", flush=True)
             st.error(f"Failed to load odds: {e}")
-            import traceback
             if DEBUG_ENABLED:
+                import traceback
                 st.code(traceback.format_exc())
             log_exception("Failed to load odds")
-    print(f"[ODDS SECTION END] Completed odds section", flush=True)
 
 # Generate Outline button
 if st.button("Generate Outline", type="primary"):
@@ -1591,5 +1479,3 @@ with col_dl:
     
     st.download_button("📥 Export", data=data, file_name=f"{export_name or 'article'}{ext}",
                        disabled=not content, use_container_width=True)
-
-print("[SCRIPT END] Entire script completed successfully", flush=True)
