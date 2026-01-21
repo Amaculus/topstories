@@ -1175,11 +1175,16 @@ if ss["use_sports"] and selected_game:
             
             if game:
                 log_debug(f"ODDS SECTION: Matched game: {away_team} @ {home_team}")
+                # Log game structure to debug missing odds
+                odds_keys = list(game.get('odds', {}).keys()) if game.get('odds') else []
+                current_keys = list(game.get('odds', {}).get('current', {}).keys()) if game.get('odds', {}).get('current') else []
+                print(f"[ODDS] Game odds structure: odds_keys={odds_keys}, current_keys={current_keys}", flush=True)
+
                 # Get selected operator from offer_row
                 selected_operator = offer_row.get("brand", "")
                 selected_operator = selected_operator.lower() if isinstance(selected_operator, str) else ""
                 log_debug(f"ODDS SECTION: Using operator: {selected_operator}")
-                
+
                 # Map brand names to sportsbook keys
                 operator_map = {
                     "draftkings": "draftkings",
@@ -1190,12 +1195,18 @@ if ss["use_sports"] and selected_game:
                     "hard rock": "hardrock",
                     "fanatics": "fanatics",
                 }
-                
+
                 sportsbook_key = operator_map.get(selected_operator, "draftkings")
                 log_debug(f"ODDS SECTION: Book key: {sportsbook_key}")
-                
+
                 # Get all odds for this game
                 game_odds = odds_fetcher.get_all_odds_for_game(game, sportsbook_key)
+
+                # If no odds from primary book, try draftkings as fallback
+                if not game_odds.get('spread_raw') and sportsbook_key != "draftkings":
+                    print(f"[ODDS] No odds from {sportsbook_key}, trying draftkings fallback", flush=True)
+                    game_odds = odds_fetcher.get_all_odds_for_game(game, "draftkings")
+                    sportsbook_key = "draftkings"
                 log_debug(f"ODDS SECTION: Odds text spread={game_odds.get('spread')} ml={game_odds.get('moneyline')} total={game_odds.get('total')}")
 
                 # Display odds in a nice format
